@@ -12,3 +12,8 @@ paddleocr==2.7.3
 paddlepaddle==2.6.1
 easyocr==1.7.1
 pytesseract==0.3.10
+SpeechRecognition==3.10.1
+pyttsx3==2.90
+edge-tts==6.1.12
+pygame==2.5.2
+openai-whisper==20231117
