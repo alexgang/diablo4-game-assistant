@@ -17,3 +17,4 @@ pyttsx3==2.90
 edge-tts==6.1.12
 pygame==2.5.2
 openai-whisper==20231117
+keyboard==0.13.5
