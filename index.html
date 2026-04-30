@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>暗黑破坏神游戏助手</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <h1>暗黑破坏神助手</h1>
+            <p>Diablo Game Assistant</p>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="#skills" class="nav-link active">升级加点</a></li>
+                <li><a href="#equipment" class="nav-link">装备指南</a></li>
+                <li><a href="#guide" class="nav-link">游戏攻略</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <!-- 升级加点模块 -->
+        <section id="skills" class="section active">
+            <div class="section-header">
+                <h2>升级加点参考</h2>
+                <p>选择职业查看加点建议</p>
+            </div>
+            <div class="class-selector">
+                <button class="class-btn active" data-class="barbarian">野蛮人</button>
+                <button class="class-btn" data-class="sorceress">女巫</button>
+                <button class="class-btn" data-class="necromancer">死灵法师</button>
+                <button class="class-btn" data-class="paladin">圣骑士</button>
+                <button class="class-btn" data-class="assassin">刺客</button>
+                <button class="class-btn" data-class="druid">德鲁伊</button>
+                <button class="class-btn" data-class="amazon">亚马逊</button>
+            </div>
+            <div class="skills-content">
+                <div id="barbarian" class="class-content active">
+                    <h3>野蛮人 - 狂战士流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>战斗技能</h4>
+                            <ul>
+                                <li><span class="skill-name">重击</span> - 20点 (核心输出)</li>
+                                <li><span class="skill-name">狂战士</span> - 20点 (主力技能)</li>
+                                <li><span class="skill-name">旋风斩</span> - 1点 (清场)</li>
+                                <li><span class="skill-name">战斗怒吼</span> - 20点 (光环加成)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>战吼技能</h4>
+                            <ul>
+                                <li><span class="skill-name">战斗指挥</span> - 1点 (前置)</li>
+                                <li><span class="skill-name">嘲弄</span> - 1点 (吸引仇恨)</li>
+                                <li><span class="skill-name">恐惧</span> - 1点 (控场)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>被动技能</h4>
+                            <ul>
+                                <li><span class="skill-name">铁布衫</span> - 20点 (物理防御)</li>
+                                <li><span class="skill-name">武器掌握</span> - 20点 (伤害加成)</li>
+                                <li><span class="skill-name">增加耐力</span> - 1点</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 装备需求 + 剩余全部投入</p>
+                        <p><strong>敏捷:</strong> 达到75%格挡率即可</p>
+                        <p><strong>体力:</strong> 前期投入20-30点</p>
+                        <p><strong>精力:</strong> 不推荐投入</p>
+                    </div>
+                </div>
+
+                <div id="sorceress" class="class-content">
+                    <h3>女巫 - 冰封球流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>冰冷技能</h4>
+                            <ul>
+                                <li><span class="skill-name">冰封球</span> - 20点 (核心输出)</li>
+                                <li><span class="skill-name">冰尖柱</span> - 20点 (辅助控制)</li>
+                                <li><span class="skill-name">暴风雪</span> - 1点 (清场)</li>
+                                <li><span class="skill-name">冰冷支配</span> - 20点 (减抗)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>闪电技能</h4>
+                            <ul>
+                                <li><span class="skill-name">静态力场</span> - 1点 (降血)</li>
+                                <li><span class="skill-name">心灵传动</span> - 1点 (传送)</li>
+                                <li><span class="skill-name">闪电支配</span> - 1点 (前置)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>火焰技能</h4>
+                            <ul>
+                                <li><span class="skill-name">温暖</span> - 1点 (回蓝)</li>
+                                <li><span class="skill-name">火球</span> - 1点 (备用)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备即可</p>
+                        <p><strong>敏捷:</strong> 不加</p>
+                        <p><strong>体力:</strong> 剩余全部投入</p>
+                        <p><strong>精力:</strong> 前期投入到150左右</p>
+                    </div>
+                </div>
+
+                <div id="necromancer" class="class-content">
+                    <h3>死灵法师 - 召唤流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>召唤技能</h4>
+                            <ul>
+                                <li><span class="skill-name">骷髅复生</span> - 20点 (主力)</li>
+                                <li><span class="skill-name">骷髅法师</span> - 20点 (远程)</li>
+                                <li><span class="skill-name">支配骷髅</span> - 20点 (强化)</li>
+                                <li><span class="skill-name">黏土魔像</span> - 1点 (肉盾)</li>
+                                <li><span class="skill-name">召唤抵抗</span> - 1点</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>毒素与白骨</h4>
+                            <ul>
+                                <li><span class="skill-name">伤害加深</span> - 1点 (诅咒)</li>
+                                <li><span class="skill-name">削弱</span> - 1点 (诅咒)</li>
+                                <li><span class="skill-name">骨墙</span> - 1点 (控场)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>诅咒技能</h4>
+                            <ul>
+                                <li><span class="skill-name">衰老</span> - 1点 (减速)</li>
+                                <li><span class="skill-name">降低抵抗</span> - 1点 (破免)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备</p>
+                        <p><strong>敏捷:</strong> 不加</p>
+                        <p><strong>体力:</strong> 剩余全部投入</p>
+                        <p><strong>精力:</strong> 不加</p>
+                    </div>
+                </div>
+
+                <div id="paladin" class="class-content">
+                    <h3>圣骑士 - 祝福之锤流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>战斗技能</h4>
+                            <ul>
+                                <li><span class="skill-name">祝福之锤</span> - 20点 (核心)</li>
+                                <li><span class="skill-name">专注</span> - 20点 (光环)</li>
+                                <li><span class="skill-name">祝福瞄准</span> - 20点 (加成)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>防御技能</h4>
+                            <ul>
+                                <li><span class="skill-name">神圣护盾</span> - 20点 (防御)</li>
+                                <li><span class="skill-name">净化</span> - 1点 (解毒)</li>
+                                <li><span class="skill-name">救助</span> - 1点 (抗寒)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>攻击技能</h4>
+                            <ul>
+                                <li><span class="skill-name">白热</span> - 1点 (近战)</li>
+                                <li><span class="skill-name">牺牲</span> - 1点 (前置)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备</p>
+                        <p><strong>敏捷:</strong> 达到75%格挡率</p>
+                        <p><strong>体力:</strong> 剩余全部投入</p>
+                        <p><strong>精力:</strong> 不加</p>
+                    </div>
+                </div>
+
+                <div id="assassin" class="class-content">
+                    <h3>刺客 - 陷阱流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>陷阱技能</h4>
+                            <ul>
+                                <li><span class="skill-name">火焰陷阱</span> - 20点 (输出)</li>
+                                <li><span class="skill-name">闪电陷阱</span> - 20点 (输出)</li>
+                                <li><span class="skill-name">亡者守卫</span> - 20点 (爆发)</li>
+                                <li><span class="skill-name">雷光守卫</span> - 1点 (辅助)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>武学技能</h4>
+                            <ul>
+                                <li><span class="skill-name">凤凰攻击</span> - 1点 (近战)</li>
+                                <li><span class="skill-name">影子大师</span> - 1点 (召唤)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>影子技能</h4>
+                            <ul>
+                                <li><span class="skill-name">能量护盾</span> - 1点 (减伤)</li>
+                                <li><span class="skill-name">心灵爆震</span> - 1点 (控场)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备</p>
+                        <p><strong>敏捷:</strong> 达到75%格挡率或加满</p>
+                        <p><strong>体力:</strong> 剩余投入</p>
+                        <p><strong>精力:</strong> 不加</p>
+                    </div>
+                </div>
+
+                <div id="druid" class="class-content">
+                    <h3>德鲁伊 - 风系召唤流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>元素技能</h4>
+                            <ul>
+                                <li><span class="skill-name">飓风装甲</span> - 20点 (防御)</li>
+                                <li><span class="skill-name">龙卷风</span> - 20点 (输出)</li>
+                                <li><span class="skill-name">暴风</span> - 20点 (输出)</li>
+                                <li><span class="skill-name">风之力</span> - 20点 (加成)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>召唤技能</h4>
+                            <ul>
+                                <li><span class="skill-name">熊灵</span> - 1点 (肉盾)</li>
+                                <li><span class="skill-name">乌鸦</span> - 1点 (骚扰)</li>
+                                <li><span class="skill-name">藤蔓</span> - 1点 (控制)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>变形技能</h4>
+                            <ul>
+                                <li><span class="skill-name">狼人变化</span> - 1点 (前置)</li>
+                                <li><span class="skill-name">熊人变化</span> - 1点 (备用)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备</p>
+                        <p><strong>敏捷:</strong> 不加</p>
+                        <p><strong>体力:</strong> 剩余全部投入</p>
+                        <p><strong>精力:</strong> 前期投入到100</p>
+                    </div>
+                </div>
+
+                <div id="amazon" class="class-content">
+                    <h3>亚马逊 - 弓系流派</h3>
+                    <div class="skill-tree">
+                        <div class="skill-category">
+                            <h4>弓系技能</h4>
+                            <ul>
+                                <li><span class="skill-name">魔法箭</span> - 1点 (前期)</li>
+                                <li><span class="skill-name">多重箭</span> - 20点 (清场)</li>
+                                <li><span class="skill-name">爆裂箭</span> - 20点 (输出)</li>
+                                <li><span class="skill-name">引导箭</span> - 20点 (BOSS)</li>
+                                <li><span class="skill-name">穿透</span> - 20点 (加成)</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>被动技能</h4>
+                            <ul>
+                                <li><span class="skill-name">闪避</span> - 1点</li>
+                                <li><span class="skill-name">躲避</span> - 1点</li>
+                                <li><span class="skill-name">回避</span> - 1点</li>
+                            </ul>
+                        </div>
+                        <div class="skill-category">
+                            <h4>标枪技能</h4>
+                            <ul>
+                                <li><span class="skill-name">闪电之怒</span> - 1点 (备用)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="attribute-tips">
+                        <h4>属性加点建议</h4>
+                        <p><strong>力量:</strong> 够穿装备</p>
+                        <p><strong>敏捷:</strong> 剩余全部投入</p>
+                        <p><strong>体力:</strong> 20-30点</p>
+                        <p><strong>精力:</strong> 不加</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 装备指南模块 -->
+        <section id="equipment" class="section">
+            <div class="section-header">
+                <h2>装备使用说明</h2>
+                <p>了解各类装备的属性和用途</p>
+            </div>
+            <div class="equipment-tabs">
+                <button class="tab-btn active" data-tab="weapons">武器</button>
+                <button class="tab-btn" data-tab="armor">护甲</button>
+                <button class="tab-btn" data-tab="accessories">饰品</button>
+                <button class="tab-btn" data-tab="runes">符文之语</button>
+            </div>
+            <div class="equipment-content">
+                <div id="weapons" class="tab-content active">
+                    <div class="equipment-grid">
+                        <div class="equipment-card">
+                            <h4>双手剑</h4>
+                            <p class="type">近战武器</p>
+                            <p class="description">高伤害输出，适合野蛮人等近战职业</p>
+                            <ul class="stats">
+                                <li>伤害: 高</li>
+                                <li>攻速: 慢</li>
+                                <li>需求: 高力量</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>法杖</h4>
+                            <p class="type">法师武器</p>
+                            <p class="description">增加魔法伤害和技能等级，适合施法职业</p>
+                            <ul class="stats">
+                                <li>伤害: 中</li>
+                                <li>攻速: 中</li>
+                                <li>需求: 高精力</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>弓</h4>
+                            <p class="type">远程武器</p>
+                            <p class="description">远程攻击，适合亚马逊等弓系职业</p>
+                            <ul class="stats">
+                                <li>伤害: 中高</li>
+                                <li>攻速: 快</li>
+                                <li>需求: 高敏捷</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>权杖</h4>
+                            <p class="type">圣骑士武器</p>
+                            <p class="description">增加光环技能等级，适合圣骑士</p>
+                            <ul class="stats">
+                                <li>伤害: 中</li>
+                                <li>攻速: 中</li>
+                                <li>需求: 中高力量</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="armor" class="tab-content">
+                    <div class="equipment-grid">
+                        <div class="equipment-card">
+                            <h4>板甲</h4>
+                            <p class="type">重型护甲</p>
+                            <p class="description">最高防御力，适合近战职业</p>
+                            <ul class="stats">
+                                <li>防御: 极高</li>
+                                <li>重量: 重</li>
+                                <li>需求: 高力量</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>锁子甲</h4>
+                            <p class="type">中型护甲</p>
+                            <p class="description">平衡防御与机动性</p>
+                            <ul class="stats">
+                                <li>防御: 中高</li>
+                                <li>重量: 中</li>
+                                <li>需求: 中力量</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>皮甲</h4>
+                            <p class="type">轻型护甲</p>
+                            <p class="description">高机动性，适合施法和远程职业</p>
+                            <ul class="stats">
+                                <li>防御: 中</li>
+                                <li>重量: 轻</li>
+                                <li>需求: 低</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>盾牌</h4>
+                            <p class="type">防御装备</p>
+                            <p class="description">提供格挡率和额外抗性</p>
+                            <ul class="stats">
+                                <li>防御: 中</li>
+                                <li>格挡: 高</li>
+                                <li>需求: 中力量</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="accessories" class="tab-content">
+                    <div class="equipment-grid">
+                        <div class="equipment-card">
+                            <h4>戒指</h4>
+                            <p class="type">饰品</p>
+                            <p class="description">提供多种属性加成</p>
+                            <ul class="stats">
+                                <li>数量: 2</li>
+                                <li>属性: 多样</li>
+                                <li>稀有度: 高</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>项链</h4>
+                            <p class="type">饰品</p>
+                            <p class="description">提供技能等级和抗性</p>
+                            <ul class="stats">
+                                <li>数量: 1</li>
+                                <li>属性: 技能加成</li>
+                                <li>稀有度: 高</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>手套</h4>
+                            <p class="type">防具</p>
+                            <p class="description">增加攻击速度和元素伤害</p>
+                            <ul class="stats">
+                                <li>攻速: +</li>
+                                <li>伤害: +</li>
+                                <li>抗性: +</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>靴子</h4>
+                            <p class="type">防具</p>
+                            <p class="description">增加移动速度和抗性</p>
+                            <ul class="stats">
+                                <li>移动速度: +</li>
+                                <li>抗性: +</li>
+                                <li>属性: 多样</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="runes" class="tab-content">
+                    <div class="equipment-grid">
+                        <div class="equipment-card">
+                            <h4>精神 (Spirit)</h4>
+                            <p class="type">符文之语</p>
+                            <p class="description">4孔剑/盾，提供技能和法力恢复</p>
+                            <ul class="stats">
+                                <li>符文: Tal + Thul + Ort + Amn</li>
+                                <li>效果: +2所有技能</li>
+                                <li>适用: 法系职业</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>谜团 (Enigma)</h4>
+                            <p class="type">符文之语</p>
+                            <p class="description">3孔盔甲，提供传送技能</p>
+                            <ul class="stats">
+                                <li>符文: Jah + Ith + Ber</li>
+                                <li>效果: 等级1传送</li>
+                                <li>适用: 所有职业</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>无限 (Infinity)</h4>
+                            <p class="type">符文之语</p>
+                            <p class="description">4孔长柄武器，提供审判光环</p>
+                            <ul class="stats">
+                                <li>符文: Ber + Mal + Ber + Ist</li>
+                                <li>效果: 审判光环降低抗性</li>
+                                <li>适用: 雇佣兵</li>
+                            </ul>
+                        </div>
+                        <div class="equipment-card">
+                            <h4>刚毅 (Fortitude)</h4>
+                            <p class="type">符文之语</p>
+                            <p class="description">4孔盔甲/武器，提供高防御和伤害</p>
+                            <ul class="stats">
+                                <li>符文: El + Sol + Dol + Lo</li>
+                                <li>效果: +300%伤害/防御</li>
+                                <li>适用: 近战/雇佣兵</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 游戏攻略模块 -->
+        <section id="guide" class="section">
+            <div class="section-header">
+                <h2>游戏内容攻略</h2>
+                <p>掌握游戏流程和BOSS攻略</p>
+            </div>
+            <div class="guide-content">
+                <div class="act-guide">
+                    <h3>第一幕 - 罗格营地</h3>
+                    <div class="guide-section">
+                        <h4>主线任务</h4>
+                        <ol>
+                            <li>救出迪卡凯恩 - 前往邪恶洞穴</li>
+                            <li>杀死血鸟 - 冰冷之原→埋骨之地</li>
+                            <li>寻找凯恩之书 - 黑暗森林→黑色荒地</li>
+                            <li>杀死安达利尔 - 修道院→地下墓穴</li>
+                        </ol>
+                    </div>
+                    <div class="guide-section">
+                        <h4>BOSS攻略: 安达利尔</h4>
+                        <ul>
+                            <li><strong>弱点:</strong> 火/冰系伤害</li>
+                            <li><strong>技能:</strong> 毒云、冲锋、恐惧</li>
+                            <li><strong>建议:</strong> 保持距离，使用火/冰技能</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="act-guide">
+                    <h3>第二幕 - 鲁·高因</h3>
+                    <div class="guide-section">
+                        <h4>主线任务</h4>
+                        <ol>
+                            <li>寻找赫拉迪克之杖 - 干燥高地→死亡神殿</li>
+                            <li>寻找方块 - 遥远的绿洲→蛆虫巢穴</li>
+                            <li>组合法杖 - 神秘避难所找赫拉森日记</li>
+                            <li>杀死都瑞尔 - 塔拉夏的古墓</li>
+                        </ol>
+                    </div>
+                    <div class="guide-section">
+                        <h4>BOSS攻略: 都瑞尔</h4>
+                        <ul>
+                            <li><strong>弱点:</strong> 火/电系伤害</li>
+                            <li><strong>技能:</strong> 寒冰新星、冰冻光环</li>
+                            <li><strong>建议:</strong> 堆冰抗，使用火技能</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="act-guide">
+                    <h3>第三幕 - 库拉斯特海港</h3>
+                    <div class="guide-section">
+                        <h4>主线任务</h4>
+                        <ol>
+                            <li>杀死邪恶之手 - 蜘蛛森林</li>
+                            <li>寻找吉得宾 - 庞大湿地→科克</li>
+                            <li>保护凯恩 - 库拉斯特商场</li>
+                            <li>杀死墨菲斯托 - 憎恨的囚牢</li>
+                        </ol>
+                    </div>
+                    <div class="guide-section">
+                        <h4>BOSS攻略: 墨菲斯托</h4>
+                        <ul>
+                            <li><strong>弱点:</strong> 闪电/冰系伤害</li>
+                            <li><strong>技能:</strong> 充能弹、传送、审判光环</li>
+                            <li><strong>建议:</strong> 注意躲避充能弹</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="act-guide">
+                    <h3>第四幕 - 群魔堡垒</h3>
+                    <div class="guide-section">
+                        <h4>主线任务</h4>
+                        <ol>
+                            <li>摧毁灵魂石 - 火焰之河</li>
+                            <li>杀死暗黑破坏神 - 混沌要塞</li>
+                        </ol>
+                    </div>
+                    <div class="guide-section">
+                        <h4>BOSS攻略: 暗黑破坏神</h4>
+                        <ul>
+                            <li><strong>弱点:</strong> 冰系伤害</li>
+                            <li><strong>技能:</strong> 火焰风暴、紫电、骨牢</li>
+                            <li><strong>建议:</strong> 保持移动，堆火抗</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="act-guide">
+                    <h3>第五幕 - 哈洛加斯</h3>
+                    <div class="guide-section">
+                        <h4>主线任务</h4>
+                        <ol>
+                            <li>拯救野蛮人 - 血腥丘陵</li>
+                            <li>摧毁地狱熔炉 - 火焰之河</li>
+                            <li>开启通往世界之石的道路</li>
+                            <li>杀死巴尔 - 世界之石要塞</li>
+                        </ol>
+                    </div>
+                    <div class="guide-section">
+                        <h4>BOSS攻略: 巴尔</h4>
+                        <ul>
+                            <li><strong>弱点:</strong> 毒素/魔法伤害</li>
+                            <li><strong>技能:</strong> 召唤、传送、死亡之触</li>
+                            <li><strong>建议:</strong> 先清小怪，注意躲避</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>© 2024 暗黑破坏神游戏助手 - 仅供参考</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
