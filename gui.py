@@ -5,8 +5,9 @@
 功能：
 1. 实时显示OCR识别状态和结果
 2. 显示任务指引、BOSS攻略、装备推荐
-3. 支持暂停/继续、手动刷新、搜索
-4. 可拖拽、置顶、半透明
+3. 语音交互：语音输入识别、语音播报回复
+4. 支持暂停/继续、手动刷新、搜索
+5. 可拖拽、置顶、半透明
 """
 
 import sys
@@ -15,7 +16,6 @@ import logging
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QFrame, QScrollArea, QLineEdit,
-    QComboBox, QStatusBar,
 )
 from PyQt5.QtGui import QFont, QPalette, QColor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
@@ -23,6 +23,12 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 from game_detector import GameDetector
 
 logger = logging.getLogger(__name__)
+
+try:
+    from voice_assistant import VoiceAssistant
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
 
 
 class AnalysisWorker(QThread):
@@ -42,6 +48,30 @@ class AnalysisWorker(QThread):
             except Exception as e:
                 logger.error(f"分析失败: {e}")
             self.msleep(2000)
+
+    def stop(self):
+        self._running = False
+        self.wait()
+
+
+class VoiceWorker(QThread):
+    """语音识别后台线程"""
+    voice_result = pyqtSignal(dict)
+
+    def __init__(self, voice_assistant):
+        super().__init__()
+        self.voice_assistant = voice_assistant
+        self._running = True
+
+    def run(self):
+        while self._running:
+            try:
+                result = self.voice_assistant.process_voice(timeout=3, phrase_time_limit=8)
+                if result and result.get('text'):
+                    self.voice_result.emit(result)
+            except Exception as e:
+                logger.error(f"语音识别失败: {e}")
+            self.msleep(500)
 
     def stop(self):
         self._running = False
@@ -85,6 +115,30 @@ class GuideWidget(QWidget):
         ocr_layout.addWidget(self.ocr_text_label)
         self.ocr_status_group.setLayout(ocr_layout)
         layout.addWidget(self.ocr_status_group)
+
+        self.voice_status_group = QWidget()
+        voice_layout = QVBoxLayout()
+        voice_layout.setSpacing(2)
+        self.voice_status_title = QLabel("语音助手")
+        self.voice_status_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
+        self.voice_status_title.setStyleSheet("color: #9b59b6;")
+        voice_layout.addWidget(self.voice_status_title)
+        self.voice_stt_label = QLabel("识别: 检测中...")
+        self.voice_stt_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        voice_layout.addWidget(self.voice_stt_label)
+        self.voice_tts_label = QLabel("播报: 检测中...")
+        self.voice_tts_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        voice_layout.addWidget(self.voice_tts_label)
+        self.voice_last_label = QLabel("最近查询: --")
+        self.voice_last_label.setWordWrap(True)
+        self.voice_last_label.setStyleSheet("color: #ccc; font-size: 11px;")
+        voice_layout.addWidget(self.voice_last_label)
+        self.voice_response_label = QLabel("回复: --")
+        self.voice_response_label.setWordWrap(True)
+        self.voice_response_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        voice_layout.addWidget(self.voice_response_label)
+        self.voice_status_group.setLayout(voice_layout)
+        layout.addWidget(self.voice_status_group)
 
         self.quest_group = QWidget()
         quest_layout = QVBoxLayout()
@@ -179,19 +233,63 @@ class GuideWidget(QWidget):
         else:
             self.recommend_group.hide()
 
+    def update_voice_result(self, result):
+        """更新语音查询结果"""
+        if not isinstance(result, dict):
+            return
+
+        text = result.get('text', '')
+        intent = result.get('intent', '')
+        query = result.get('query', '')
+        response = result.get('response', '')
+
+        if text:
+            self.voice_last_label.setText(f"查询: {text}")
+        if response:
+            self.voice_response_label.setText(f"回复: {response}")
+
+        if result.get('results'):
+            lines = []
+            for r in result['results'][:5]:
+                cat = r['category']
+                score = r['score']
+                data = r['data']
+                name = data.get('name', data.get('title', ''))
+                lines.append(f"[{cat}] {score:.0%} {name}")
+            self.recommend_content.setPlainText('\n'.join(lines))
+            self.recommend_group.show()
+
 
 class MainWindow(QMainWindow):
     """主窗口"""
 
-    def __init__(self, use_web_data=False, ocr_engine=None):
+    def __init__(self, use_web_data=False, ocr_engine=None, stt_engine='google', tts_engine='auto'):
         super().__init__()
         self.detector = GameDetector(use_web_data=use_web_data, use_ocr=True, ocr_engine=ocr_engine)
+        self.stt_engine = stt_engine
+        self.tts_engine = tts_engine
+
+        self.voice_assistant = None
+        self.voice_worker = None
+        self.is_voice_listening = False
+
+        if VOICE_AVAILABLE:
+            try:
+                self.voice_assistant = VoiceAssistant(
+                    content_indexer=self.detector.indexer,
+                    stt_engine=stt_engine,
+                    tts_engine=tts_engine,
+                )
+            except Exception as e:
+                logger.warning(f"语音助手初始化失败: {e}")
+
         self.init_ui()
         self.start_analysis()
+        self._update_voice_status_display()
 
     def init_ui(self):
         self.setWindowTitle("暗黑破坏神游戏助手")
-        self.setGeometry(100, 100, 340, 600)
+        self.setGeometry(100, 100, 340, 700)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
         self.setWindowOpacity(0.92)
@@ -219,6 +317,15 @@ class MainWindow(QMainWindow):
         self.ocr_indicator.setFont(QFont('Microsoft YaHei', 9))
         self.ocr_indicator.setStyleSheet(f"color: {ocr_color};")
         header_layout.addWidget(self.ocr_indicator)
+
+        voice_status = self.voice_assistant.get_status() if self.voice_assistant else {}
+        stt = voice_status.get('stt_engine', 'none')
+        tts = voice_status.get('tts_engine', 'none')
+        voice_color = '#9b59b6' if (stt != 'none' or tts != 'none') else '#666'
+        self.voice_indicator = QLabel(f"Voice: {stt}/{tts}")
+        self.voice_indicator.setFont(QFont('Microsoft YaHei', 8))
+        self.voice_indicator.setStyleSheet(f"color: {voice_color};")
+        header_layout.addWidget(self.voice_indicator)
 
         header_layout.addStretch()
 
@@ -292,6 +399,36 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(control_widget)
 
+        voice_control_widget = QWidget()
+        voice_control_layout = QHBoxLayout(voice_control_widget)
+        voice_control_layout.setSpacing(4)
+
+        self.voice_listen_btn = QPushButton("🎤 语音输入")
+        self.voice_listen_btn.setStyleSheet(
+            "background-color: #9b59b6; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.voice_listen_btn.clicked.connect(self.toggle_voice_listening)
+        voice_control_layout.addWidget(self.voice_listen_btn)
+
+        self.voice_speak_btn = QPushButton("🔊 朗读结果")
+        self.voice_speak_btn.setStyleSheet(
+            "background-color: #2d5a27; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.voice_speak_btn.clicked.connect(self.speak_current_result)
+        voice_control_layout.addWidget(self.voice_speak_btn)
+
+        self.voice_stop_btn = QPushButton("⏹ 停止朗读")
+        self.voice_stop_btn.setStyleSheet(
+            "background-color: #666; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.voice_stop_btn.clicked.connect(self.stop_speaking)
+        voice_control_layout.addWidget(self.voice_stop_btn)
+
+        layout.addWidget(voice_control_widget)
+
         self.dragging = False
         self.drag_position = None
 
@@ -352,10 +489,88 @@ class MainWindow(QMainWindow):
                 "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
             )
 
+    def toggle_voice_listening(self):
+        """切换语音监听"""
+        if not self.voice_assistant:
+            self.voice_listen_btn.setText("🎤 不可用")
+            return
+
+        if self.is_voice_listening:
+            self._stop_voice_listening()
+        else:
+            self._start_voice_listening()
+
+    def _start_voice_listening(self):
+        """启动语音监听"""
+        if not self.voice_assistant or not self.voice_assistant.voice_input.available:
+            self.voice_listen_btn.setText("🎤 麦克风不可用")
+            self.voice_listen_btn.setStyleSheet(
+                "background-color: #666; color: white; border: none; "
+                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+            )
+            return
+
+        self.is_voice_listening = True
+        self.voice_listen_btn.setText("🎤 监听中...")
+        self.voice_listen_btn.setStyleSheet(
+            "background-color: #c0392b; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+
+        self.voice_worker = VoiceWorker(self.voice_assistant)
+        self.voice_worker.voice_result.connect(self._on_voice_result)
+        self.voice_worker.start()
+
+    def _stop_voice_listening(self):
+        """停止语音监听"""
+        self.is_voice_listening = False
+        self.voice_listen_btn.setText("🎤 语音输入")
+        self.voice_listen_btn.setStyleSheet(
+            "background-color: #9b59b6; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+
+        if self.voice_worker:
+            self.voice_worker.stop()
+            self.voice_worker = None
+
+    def _on_voice_result(self, result):
+        """处理语音识别结果"""
+        self.guide_widget.update_voice_result(result)
+
+        if result.get('spoken'):
+            self.voice_speak_btn.setText("🔊 播报中...")
+            QTimer.singleShot(3000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
+
+    def speak_current_result(self):
+        """朗读当前推荐结果"""
+        if not self.voice_assistant or not self.voice_assistant.voice_output.available:
+            return
+
+        text = self.guide_widget.recommend_content.toPlainText()
+        if text:
+            self.voice_assistant.voice_output.speak(text, blocking=False)
+            self.voice_speak_btn.setText("🔊 播报中...")
+            QTimer.singleShot(5000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
+
+    def stop_speaking(self):
+        """停止朗读"""
+        if self.voice_assistant:
+            self.voice_assistant.voice_output.stop()
+            self.voice_speak_btn.setText("🔊 朗读结果")
+
     def manual_search(self):
         """手动搜索"""
         query = self.search_input.text().strip()
         if not query:
+            return
+
+        if self.voice_assistant:
+            result = self.voice_assistant.process_text(query)
+            self.guide_widget.update_voice_result(result)
+            if result.get('spoken'):
+                self.voice_speak_btn.setText("🔊 播报中...")
+                QTimer.singleShot(3000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
             return
 
         results = self.detector.indexer.search(query, top_n=10)
@@ -390,6 +605,30 @@ class MainWindow(QMainWindow):
         else:
             self.guide_widget.recommend_content.setPlainText(f"未找到与 '{query}' 相关的内容")
 
+    def _update_voice_status_display(self):
+        """更新语音状态显示"""
+        if not self.voice_assistant:
+            self.guide_widget.voice_stt_label.setText("识别: 不可用")
+            self.guide_widget.voice_stt_label.setStyleSheet("color: #ff6b35; font-size: 11px;")
+            self.guide_widget.voice_tts_label.setText("播报: 不可用")
+            self.guide_widget.voice_tts_label.setStyleSheet("color: #ff6b35; font-size: 11px;")
+            return
+
+        status = self.voice_assistant.get_status()
+        if status['stt_available']:
+            self.guide_widget.voice_stt_label.setText(f"识别: {status['stt_engine']}")
+            self.guide_widget.voice_stt_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        else:
+            self.guide_widget.voice_stt_label.setText("识别: 不可用")
+            self.guide_widget.voice_stt_label.setStyleSheet("color: #ff6b35; font-size: 11px;")
+
+        if status['tts_available']:
+            self.guide_widget.voice_tts_label.setText(f"播报: {status['tts_engine']}")
+            self.guide_widget.voice_tts_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        else:
+            self.guide_widget.voice_tts_label.setText("播报: 不可用")
+            self.guide_widget.voice_tts_label.setStyleSheet("color: #ff6b35; font-size: 11px;")
+
     def update_guide(self, analysis):
         """更新指引内容"""
         if not self.is_paused:
@@ -398,6 +637,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if hasattr(self, 'worker'):
             self.worker.stop()
+        if self.voice_worker:
+            self.voice_worker.stop()
+        if self.voice_assistant:
+            self.voice_assistant.stop_listening()
         event.accept()
 
 
