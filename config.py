@@ -50,6 +50,20 @@ GUI_WIDTH = 340
 GUI_HEIGHT = 700
 GUI_ALWAYS_ON_TOP = True
 
+OVERLAY_CONFIG = {
+    'enabled': True,
+    'opacity': 0.85,
+    'width': 320,
+    'height': 480,
+    'position': 'right',
+    'auto_show': False,
+    'default_tab': 0,
+    'click_through': False,
+    'font_size': 9,
+    'show_rarity_colors': True,
+    'show_slot_icons': True,
+}
+
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
 
