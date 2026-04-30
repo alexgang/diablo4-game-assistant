@@ -8,6 +8,7 @@
 3. 语音交互：语音输入识别、语音播报回复
 4. 支持暂停/继续、手动刷新、搜索
 5. 可拖拽、置顶、半透明
+6. 游戏叠加层：装备/技能/巅峰/雇佣半透明显示
 """
 
 import sys
@@ -23,6 +24,12 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 from game_detector import GameDetector
 
 logger = logging.getLogger(__name__)
+
+try:
+    from overlay import OverlayPanel
+    OVERLAY_AVAILABLE = True
+except ImportError:
+    OVERLAY_AVAILABLE = False
 
 try:
     from voice_assistant import VoiceAssistant
@@ -273,6 +280,9 @@ class MainWindow(QMainWindow):
         self.voice_worker = None
         self.is_voice_listening = False
 
+        self.overlay_panel = None
+        self.overlay_visible = False
+
         if VOICE_AVAILABLE:
             try:
                 self.voice_assistant = VoiceAssistant(
@@ -428,6 +438,52 @@ class MainWindow(QMainWindow):
         voice_control_layout.addWidget(self.voice_stop_btn)
 
         layout.addWidget(voice_control_widget)
+
+        overlay_control_widget = QWidget()
+        overlay_control_layout = QHBoxLayout(overlay_control_widget)
+        overlay_control_layout.setSpacing(4)
+
+        self.overlay_toggle_btn = QPushButton("📋 叠加层")
+        self.overlay_toggle_btn.setStyleSheet(
+            "background-color: #e67e22; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.overlay_toggle_btn.clicked.connect(self.toggle_overlay)
+        overlay_control_layout.addWidget(self.overlay_toggle_btn)
+
+        self.overlay_equip_btn = QPushButton("⚔️ 装备")
+        self.overlay_equip_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #bf642f; border: 1px solid #bf642f; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.overlay_equip_btn.clicked.connect(lambda: self._show_overlay_tab(0))
+        overlay_control_layout.addWidget(self.overlay_equip_btn)
+
+        self.overlay_skill_btn = QPushButton("🔮 技能")
+        self.overlay_skill_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #4ade80; border: 1px solid #4ade80; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.overlay_skill_btn.clicked.connect(lambda: self._show_overlay_tab(1))
+        overlay_control_layout.addWidget(self.overlay_skill_btn)
+
+        self.overlay_paragon_btn = QPushButton("🌟 巅峰")
+        self.overlay_paragon_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #f1c40f; border: 1px solid #f1c40f; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.overlay_paragon_btn.clicked.connect(lambda: self._show_overlay_tab(2))
+        overlay_control_layout.addWidget(self.overlay_paragon_btn)
+
+        self.overlay_merc_btn = QPushButton("🗡️ 雇佣")
+        self.overlay_merc_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #9b59b6; border: 1px solid #9b59b6; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.overlay_merc_btn.clicked.connect(lambda: self._show_overlay_tab(3))
+        overlay_control_layout.addWidget(self.overlay_merc_btn)
+
+        layout.addWidget(overlay_control_widget)
 
         self.dragging = False
         self.drag_position = None
@@ -602,6 +658,7 @@ class MainWindow(QMainWindow):
                 'formatted': '\n'.join(formatted_lines),
             }
             self.update_guide(analysis)
+            self._update_overlay_from_search(results)
         else:
             self.guide_widget.recommend_content.setPlainText(f"未找到与 '{query}' 相关的内容")
 
@@ -633,6 +690,95 @@ class MainWindow(QMainWindow):
         """更新指引内容"""
         if not self.is_paused:
             self.guide_widget.update_guide(analysis)
+            self._update_overlay_from_analysis(analysis)
+
+    def toggle_overlay(self):
+        """切换叠加层显示"""
+        if not OVERLAY_AVAILABLE:
+            self.overlay_toggle_btn.setText("📋 不可用")
+            return
+
+        if self.overlay_visible and self.overlay_panel:
+            self.overlay_panel.hide()
+            self.overlay_visible = False
+            self.overlay_toggle_btn.setText("📋 叠加层")
+            self.overlay_toggle_btn.setStyleSheet(
+                "background-color: #e67e22; color: white; border: none; "
+                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+            )
+        else:
+            if not self.overlay_panel:
+                self.overlay_panel = OverlayPanel(opacity=0.85)
+                self.overlay_panel.closed.connect(self._on_overlay_closed)
+            self.overlay_panel.show_at_game_position()
+            self.overlay_visible = True
+            self.overlay_toggle_btn.setText("📋 隐藏叠加")
+            self.overlay_toggle_btn.setStyleSheet(
+                "background-color: #c0392b; color: white; border: none; "
+                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+            )
+
+    def _show_overlay_tab(self, tab_index):
+        """显示叠加层并切换到指定标签"""
+        if not OVERLAY_AVAILABLE:
+            return
+
+        if not self.overlay_panel:
+            self.overlay_panel = OverlayPanel(opacity=0.85)
+            self.overlay_panel.closed.connect(self._on_overlay_closed)
+
+        self.overlay_panel._tab_widget.setCurrentIndex(tab_index)
+
+        if not self.overlay_visible:
+            self.overlay_panel.show_at_game_position()
+            self.overlay_visible = True
+            self.overlay_toggle_btn.setText("📋 隐藏叠加")
+            self.overlay_toggle_btn.setStyleSheet(
+                "background-color: #c0392b; color: white; border: none; "
+                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+            )
+
+    def _on_overlay_closed(self):
+        """叠加层关闭回调"""
+        self.overlay_visible = False
+        self.overlay_toggle_btn.setText("📋 叠加层")
+        self.overlay_toggle_btn.setStyleSheet(
+            "background-color: #e67e22; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+
+    def _update_overlay_from_analysis(self, analysis):
+        """从分析结果更新叠加层"""
+        if not self.overlay_panel or not self.overlay_visible:
+            return
+
+        recommendations = analysis.get('recommendations', {})
+        class_name = analysis.get('class_name')
+
+        build_details = recommendations.get('build_details', [])
+        if build_details:
+            top_build = build_details[0]
+            self.overlay_panel.update_from_build(class_name, top_build)
+            return
+
+        equip_suggestions = recommendations.get('equipment_suggestions', [])
+        skill_info = recommendations.get('skill_info', [])
+
+        if equip_suggestions:
+            equip_data = {
+                'equipment': [s for s in equip_suggestions],
+                'title': '装备推荐',
+            }
+            self.overlay_panel.update_equipment(class_name, equip_data)
+
+        if skill_info:
+            self.overlay_panel.update_skills(class_name, {'skills': skill_info})
+
+    def _update_overlay_from_search(self, results, class_name=None):
+        """从搜索结果更新叠加层"""
+        if not self.overlay_panel:
+            return
+        self.overlay_panel.update_from_search_results(results, class_name)
 
     def closeEvent(self, event):
         if hasattr(self, 'worker'):
@@ -641,6 +787,8 @@ class MainWindow(QMainWindow):
             self.voice_worker.stop()
         if self.voice_assistant:
             self.voice_assistant.stop_listening()
+        if self.overlay_panel:
+            self.overlay_panel.close()
         event.accept()
 
 
