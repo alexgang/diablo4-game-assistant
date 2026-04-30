@@ -64,6 +64,20 @@ OVERLAY_CONFIG = {
     'show_slot_icons': True,
 }
 
+HOTKEY_CONFIG = {
+    'enabled': True,
+    'bindings': {
+        'voice_toggle': 'ctrl+alt+v',
+        'overlay_toggle': 'ctrl+alt+o',
+        'overlay_equip': 'ctrl+alt+e',
+        'overlay_skill': 'ctrl+alt+s',
+        'overlay_paragon': 'ctrl+alt+p',
+        'overlay_merc': 'ctrl+alt+m',
+        'window_toggle': 'ctrl+alt+h',
+        'refresh': 'ctrl+alt+r',
+    },
+}
+
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
 
