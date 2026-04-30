@@ -4,3 +4,11 @@ opencv-python==4.9.0.80
 numpy==1.26.4
 Pillow==10.2.0
 pyqt5==5.15.10
+requests==2.31.0
+beautifulsoup4==4.12.3
+selenium==4.18.1
+webdriver-manager==4.0.1
+paddleocr==2.7.3
+paddlepaddle==2.6.1
+easyocr==1.7.1
+pytesseract==0.3.10
