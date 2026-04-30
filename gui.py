@@ -43,6 +43,12 @@ try:
 except ImportError:
     HOTKEY_AVAILABLE = False
 
+try:
+    from damage_analyzer import DamageMonitor, DamageLogParser, DamageStatistics, BuildComparator
+    DAMAGE_AVAILABLE = True
+except ImportError:
+    DAMAGE_AVAILABLE = False
+
 
 class AnalysisWorker(QThread):
     """后台分析线程"""
@@ -152,6 +158,33 @@ class GuideWidget(QWidget):
         voice_layout.addWidget(self.voice_response_label)
         self.voice_status_group.setLayout(voice_layout)
         layout.addWidget(self.voice_status_group)
+
+        self.damage_group = QWidget()
+        dmg_layout = QVBoxLayout()
+        dmg_layout.setSpacing(2)
+        self.damage_title = QLabel("⚔️ 伤害分析")
+        self.damage_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
+        self.damage_title.setStyleSheet("color: #e74c3c;")
+        dmg_layout.addWidget(self.damage_title)
+        self.damage_dps_label = QLabel("DPS: --")
+        self.damage_dps_label.setStyleSheet("color: #ff6b35; font-size: 12px; font-weight: bold;")
+        dmg_layout.addWidget(self.damage_dps_label)
+        self.damage_crit_label = QLabel("暴击率: --")
+        self.damage_crit_label.setStyleSheet("color: #f1c40f; font-size: 11px;")
+        dmg_layout.addWidget(self.damage_crit_label)
+        self.damage_tier_label = QLabel("评级: --")
+        self.damage_tier_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        dmg_layout.addWidget(self.damage_tier_label)
+        self.damage_skill_label = QLabel("主力技能: --")
+        self.damage_skill_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        dmg_layout.addWidget(self.damage_skill_label)
+        self.damage_advice_label = QLabel("建议: --")
+        self.damage_advice_label.setWordWrap(True)
+        self.damage_advice_label.setStyleSheet("color: #ccc; font-size: 11px;")
+        dmg_layout.addWidget(self.damage_advice_label)
+        self.damage_group.setLayout(dmg_layout)
+        self.damage_group.hide()
+        layout.addWidget(self.damage_group)
 
         self.quest_group = QWidget()
         quest_layout = QVBoxLayout()
@@ -272,6 +305,45 @@ class GuideWidget(QWidget):
             self.recommend_content.setPlainText('\n'.join(lines))
             self.recommend_group.show()
 
+    def update_damage_report(self, report):
+        """更新伤害分析报告"""
+        if not isinstance(report, dict):
+            return
+
+        summary = report.get('summary', {})
+        comparison = report.get('comparison', {})
+
+        dps = summary.get('dps', 0)
+        crit_rate = summary.get('crit_rate', 0)
+        top_skill = summary.get('top_skill', '--')
+
+        self.damage_dps_label.setText(f"DPS: {dps:,.0f}")
+
+        dps_eval = comparison.get('dps_evaluation', {})
+        if dps_eval:
+            tier = dps_eval.get('tier', '--')
+            label = dps_eval.get('label', '')
+            color = dps_eval.get('color', '#aaa')
+            self.damage_tier_label.setText(f"评级: {tier}（{label}）")
+            self.damage_tier_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: bold;")
+
+        self.damage_crit_label.setText(f"暴击率: {crit_rate:.1f}%")
+        self.damage_skill_label.setText(f"主力技能: {top_skill}")
+
+        recommendations = comparison.get('recommendations', [])
+        if recommendations:
+            advice_lines = []
+            for rec in recommendations:
+                msg = rec.get('message', '')
+                advice_lines.append(f"• {msg}")
+                for s in rec.get('suggestions', [])[:2]:
+                    advice_lines.append(f"  → {s}")
+            self.damage_advice_label.setText('\n'.join(advice_lines))
+        else:
+            self.damage_advice_label.setText("暂无建议")
+
+        self.damage_group.show()
+
 
 class MainWindow(QMainWindow):
     """主窗口"""
@@ -290,6 +362,9 @@ class MainWindow(QMainWindow):
         self.overlay_visible = False
 
         self.hotkey_manager = None
+
+        self.damage_monitor = None
+        self.is_damage_monitoring = False
 
         if VOICE_AVAILABLE:
             try:
@@ -500,6 +575,36 @@ class MainWindow(QMainWindow):
         overlay_control_layout.addWidget(self.overlay_merc_btn)
 
         layout.addWidget(overlay_control_widget)
+
+        damage_control_widget = QWidget()
+        damage_control_layout = QHBoxLayout(damage_control_widget)
+        damage_control_layout.setSpacing(4)
+
+        self.damage_monitor_btn = QPushButton("⚔️ 伤害监控")
+        self.damage_monitor_btn.setStyleSheet(
+            "background-color: #c0392b; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.damage_monitor_btn.clicked.connect(self.toggle_damage_monitor)
+        damage_control_layout.addWidget(self.damage_monitor_btn)
+
+        self.damage_reset_btn = QPushButton("🔄 重置")
+        self.damage_reset_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #e74c3c; border: 1px solid #e74c3c; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.damage_reset_btn.clicked.connect(self.reset_damage_stats)
+        damage_control_layout.addWidget(self.damage_reset_btn)
+
+        self.damage_feed_btn = QPushButton("📝 输入日志")
+        self.damage_feed_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #f39c12; border: 1px solid #f39c12; "
+            "border-radius: 3px; padding: 4px 8px; font-size: 11px;"
+        )
+        self.damage_feed_btn.clicked.connect(self._feed_damage_log)
+        damage_control_layout.addWidget(self.damage_feed_btn)
+
+        layout.addWidget(damage_control_widget)
 
         self.dragging = False
         self.drag_position = None
@@ -815,6 +920,7 @@ class MainWindow(QMainWindow):
         self.hotkey_manager.overlay_tab_requested.connect(self._on_hotkey_overlay_tab)
         self.hotkey_manager.window_toggled.connect(self._on_hotkey_window)
         self.hotkey_manager.refresh_requested.connect(self._on_hotkey_refresh)
+        self.hotkey_manager.damage_toggled.connect(self._on_hotkey_damage)
         self.hotkey_manager.hotkey_pressed.connect(self._on_hotkey_pressed)
 
         status = self.hotkey_manager.get_status()
@@ -862,6 +968,10 @@ class MainWindow(QMainWindow):
         """快捷键：刷新分析"""
         self.manual_refresh()
 
+    def _on_hotkey_damage(self):
+        """快捷键：切换伤害监控"""
+        self.toggle_damage_monitor()
+
     def _on_hotkey_pressed(self, action):
         """快捷键触发反馈"""
         if self.hotkey_manager:
@@ -871,6 +981,124 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(300, lambda: self.hotkey_indicator.setStyleSheet(
                 "color: #e67e22; font-size: 9px;"
             ))
+
+    def toggle_damage_monitor(self):
+        """切换伤害监控"""
+        if not DAMAGE_AVAILABLE:
+            self.damage_monitor_btn.setText("⚔️ 不可用")
+            return
+
+        if self.is_damage_monitoring:
+            self._stop_damage_monitor()
+        else:
+            self._start_damage_monitor()
+
+    def _start_damage_monitor(self):
+        """启动伤害监控"""
+        if not DAMAGE_AVAILABLE:
+            return
+
+        if not self.damage_monitor:
+            ocr_rec = self.detector.ocr_recognizer if hasattr(self.detector, 'ocr_recognizer') else None
+            self.damage_monitor = DamageMonitor(
+                ocr_recognizer=ocr_rec,
+                content_indexer=self.detector.indexer,
+            )
+
+        self.damage_monitor.start_monitoring(callback=self._on_damage_update)
+        self.is_damage_monitoring = True
+        self.damage_monitor_btn.setText("⚔️ 监控中...")
+        self.damage_monitor_btn.setStyleSheet(
+            "background-color: #e74c3c; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+        self.guide_widget.damage_group.show()
+
+    def _stop_damage_monitor(self):
+        """停止伤害监控"""
+        if self.damage_monitor:
+            self.damage_monitor.stop_monitoring()
+        self.is_damage_monitoring = False
+        self.damage_monitor_btn.setText("⚔️ 伤害监控")
+        self.damage_monitor_btn.setStyleSheet(
+            "background-color: #c0392b; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+        )
+
+    def reset_damage_stats(self):
+        """重置伤害统计"""
+        if self.damage_monitor:
+            self.damage_monitor.reset()
+            self.guide_widget.damage_dps_label.setText("DPS: --")
+            self.guide_widget.damage_crit_label.setText("暴击率: --")
+            self.guide_widget.damage_tier_label.setText("评级: --")
+            self.guide_widget.damage_skill_label.setText("主力技能: --")
+            self.guide_widget.damage_advice_label.setText("建议: --")
+
+    def _on_damage_update(self, report):
+        """伤害数据更新回调"""
+        self.guide_widget.update_damage_report(report)
+        if self.overlay_panel and self.overlay_visible:
+            self._update_overlay_damage(report)
+
+    def _feed_damage_log(self):
+        """手动输入伤害日志"""
+        from PyQt5.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getMultiLineText(
+            self, "输入战斗日志",
+            "粘贴D4高级战斗日志文本：",
+            "",
+        )
+        if ok and text.strip():
+            if not self.damage_monitor and DAMAGE_AVAILABLE:
+                self.damage_monitor = DamageMonitor(
+                    content_indexer=self.detector.indexer,
+                )
+            if self.damage_monitor:
+                events = self.damage_monitor.feed_log_text(text)
+                if events:
+                    report = self.damage_monitor.get_report()
+                    self.guide_widget.update_damage_report(report)
+                    if self.overlay_panel and self.overlay_visible:
+                        self._update_overlay_damage(report)
+                else:
+                    self.guide_widget.damage_advice_label.setText("未识别到伤害数据，请检查日志格式")
+
+    def _update_overlay_damage(self, report):
+        """更新叠加层伤害数据"""
+        if not self.overlay_panel:
+            return
+
+        summary = report.get('summary', {})
+        comparison = report.get('comparison', {})
+
+        skill_breakdown = summary.get('skill_breakdown', {})
+        if skill_breakdown:
+            equip_data = {
+                'equipment': [],
+                'title': f"伤害统计 DPS:{summary.get('dps', 0):,.0f}",
+            }
+            for skill, data in skill_breakdown.items():
+                equip_data['equipment'].append({
+                    'name': f"{skill} ({data['percentage']}%)",
+                    'slot': f"avg:{data['avg_damage']:,.0f} max:{data['max_damage']:,.0f}",
+                    'rarity': '暗金' if data['percentage'] > 30 else '传奇',
+                })
+            self.overlay_panel.update_equipment(
+                report.get('player_class', ''), equip_data
+            )
+
+        recommendations = comparison.get('recommendations', [])
+        if recommendations:
+            advice_skills = []
+            for rec in recommendations:
+                advice_skills.append(rec.get('message', ''))
+                for s in rec.get('suggestions', [])[:2]:
+                    advice_skills.append(f"  → {s}")
+            self.overlay_panel.update_skills(
+                report.get('player_class', ''),
+                {'skills': advice_skills},
+            )
 
     def closeEvent(self, event):
         if hasattr(self, 'worker'):
@@ -883,6 +1111,8 @@ class MainWindow(QMainWindow):
             self.overlay_panel.close()
         if self.hotkey_manager:
             self.hotkey_manager.cleanup()
+        if self.damage_monitor:
+            self.damage_monitor.stop_monitoring()
         event.accept()
 
 
