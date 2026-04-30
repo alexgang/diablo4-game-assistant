@@ -42,6 +42,7 @@ class HotkeyManager(QObject):
     overlay_tab_requested = pyqtSignal(int)
     window_toggled = pyqtSignal()
     refresh_requested = pyqtSignal()
+    damage_toggled = pyqtSignal()
     hotkey_pressed = pyqtSignal(str)
 
     DEFAULT_HOTKEYS = {
@@ -53,6 +54,7 @@ class HotkeyManager(QObject):
         'overlay_merc': 'ctrl+alt+m',
         'window_toggle': 'ctrl+alt+h',
         'refresh': 'ctrl+alt+r',
+        'damage_toggle': 'ctrl+alt+d',
     }
 
     HOTKEY_LABELS = {
@@ -64,6 +66,7 @@ class HotkeyManager(QObject):
         'overlay_merc': '叠加层-雇佣',
         'window_toggle': '隐藏/显示主窗口',
         'refresh': '刷新分析',
+        'damage_toggle': '切换伤害监控',
     }
 
     HOTKEY_TAB_MAP = {
@@ -144,6 +147,8 @@ class HotkeyManager(QObject):
             self.window_toggled.emit()
         elif action == 'refresh':
             self.refresh_requested.emit()
+        elif action == 'damage_toggle':
+            self.damage_toggled.emit()
 
         self.hotkey_pressed.emit(action)
 
