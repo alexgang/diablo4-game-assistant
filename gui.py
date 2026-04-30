@@ -37,6 +37,12 @@ try:
 except ImportError:
     VOICE_AVAILABLE = False
 
+try:
+    from hotkey_manager import HotkeyManager
+    HOTKEY_AVAILABLE = True
+except ImportError:
+    HOTKEY_AVAILABLE = False
+
 
 class AnalysisWorker(QThread):
     """后台分析线程"""
@@ -283,6 +289,8 @@ class MainWindow(QMainWindow):
         self.overlay_panel = None
         self.overlay_visible = False
 
+        self.hotkey_manager = None
+
         if VOICE_AVAILABLE:
             try:
                 self.voice_assistant = VoiceAssistant(
@@ -296,6 +304,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.start_analysis()
         self._update_voice_status_display()
+        self._init_hotkeys()
 
     def init_ui(self):
         self.setWindowTitle("暗黑破坏神游戏助手")
@@ -336,6 +345,13 @@ class MainWindow(QMainWindow):
         self.voice_indicator.setFont(QFont('Microsoft YaHei', 8))
         self.voice_indicator.setStyleSheet(f"color: {voice_color};")
         header_layout.addWidget(self.voice_indicator)
+
+        hotkey_color = '#e67e22' if HOTKEY_AVAILABLE else '#666'
+        self.hotkey_indicator = QLabel("⌨" if HOTKEY_AVAILABLE else "")
+        self.hotkey_indicator.setFont(QFont('Microsoft YaHei', 9))
+        self.hotkey_indicator.setStyleSheet(f"color: {hotkey_color};")
+        self.hotkey_indicator.setToolTip(self._get_hotkey_tooltip() if HOTKEY_AVAILABLE else "")
+        header_layout.addWidget(self.hotkey_indicator)
 
         header_layout.addStretch()
 
@@ -780,6 +796,82 @@ class MainWindow(QMainWindow):
             return
         self.overlay_panel.update_from_search_results(results, class_name)
 
+    def _init_hotkeys(self):
+        """初始化全局快捷键"""
+        if not HOTKEY_AVAILABLE:
+            logger.info("全局快捷键不可用（keyboard 库未安装）")
+            return
+
+        try:
+            from config import HOTKEY_CONFIG
+            hotkeys = HOTKEY_CONFIG.get('bindings', {})
+        except ImportError:
+            hotkeys = {}
+
+        self.hotkey_manager = HotkeyManager(hotkeys=hotkeys)
+
+        self.hotkey_manager.voice_toggled.connect(self._on_hotkey_voice)
+        self.hotkey_manager.overlay_toggled.connect(self._on_hotkey_overlay)
+        self.hotkey_manager.overlay_tab_requested.connect(self._on_hotkey_overlay_tab)
+        self.hotkey_manager.window_toggled.connect(self._on_hotkey_window)
+        self.hotkey_manager.refresh_requested.connect(self._on_hotkey_refresh)
+        self.hotkey_manager.hotkey_pressed.connect(self._on_hotkey_pressed)
+
+        status = self.hotkey_manager.get_status()
+        if status['available']:
+            logger.info(f"全局快捷键已启用，已注册 {status['registered_count']} 个快捷键")
+        else:
+            logger.warning("全局快捷键初始化失败")
+
+    def _get_hotkey_tooltip(self):
+        """获取快捷键提示文本"""
+        if not self.hotkey_manager:
+            from hotkey_manager import HotkeyManager
+            mgr = HotkeyManager.__new__(HotkeyManager)
+            mgr._hotkeys = HotkeyManager.DEFAULT_HOTKEYS
+        else:
+            mgr = self.hotkey_manager
+
+        lines = ["快捷键列表:"]
+        for action, key in mgr._hotkeys.items():
+            label = mgr.HOTKEY_LABELS.get(action, action)
+            lines.append(f"  {key.upper()} - {label}")
+        return '\n'.join(lines)
+
+    def _on_hotkey_voice(self):
+        """快捷键：切换语音输入"""
+        self.toggle_voice_listening()
+
+    def _on_hotkey_overlay(self):
+        """快捷键：切换叠加层"""
+        self.toggle_overlay()
+
+    def _on_hotkey_overlay_tab(self, tab_index):
+        """快捷键：叠加层标签页"""
+        self._show_overlay_tab(tab_index)
+
+    def _on_hotkey_window(self):
+        """快捷键：隐藏/显示主窗口"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.activateWindow()
+
+    def _on_hotkey_refresh(self):
+        """快捷键：刷新分析"""
+        self.manual_refresh()
+
+    def _on_hotkey_pressed(self, action):
+        """快捷键触发反馈"""
+        if self.hotkey_manager:
+            key = self.hotkey_manager._hotkeys.get(action, '')
+            label = self.hotkey_manager.HOTKEY_LABELS.get(action, action)
+            self.hotkey_indicator.setStyleSheet("color: #ff6b35; font-size: 12px;")
+            QTimer.singleShot(300, lambda: self.hotkey_indicator.setStyleSheet(
+                "color: #e67e22; font-size: 9px;"
+            ))
+
     def closeEvent(self, event):
         if hasattr(self, 'worker'):
             self.worker.stop()
@@ -789,6 +881,8 @@ class MainWindow(QMainWindow):
             self.voice_assistant.stop_listening()
         if self.overlay_panel:
             self.overlay_panel.close()
+        if self.hotkey_manager:
+            self.hotkey_manager.cleanup()
         event.accept()
 
 
