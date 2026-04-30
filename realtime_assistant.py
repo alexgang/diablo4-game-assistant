@@ -2,10 +2,12 @@
 """
 实时游戏助手 - 整合所有模块
 
-结合屏幕捕获、OCR识别、内容索引、网站数据爬虫
+结合屏幕捕获、OCR识别、内容索引、网站数据爬虫、语音交互
 实现基于游戏窗口内容的智能辅助功能
 
-流程：屏幕捕获 -> OCR文字识别 -> 内容索引匹配 -> 智能推荐
+流程：
+1. 屏幕捕获 -> OCR文字识别 -> 内容索引匹配 -> 智能推荐
+2. 语音输入 -> 意图识别 -> 数据库搜索 -> 屏幕提示 + 语音回复
 """
 
 import sys
@@ -35,15 +37,23 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
 
+try:
+    from voice_assistant import VoiceAssistant
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+
 
 class RealTimeAssistant:
     """实时游戏助手"""
 
-    def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None):
+    def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None,
+                 use_voice=True, stt_engine='google', tts_engine='auto'):
         self.screen_capture = ScreenCapture()
         self.game_db = GameDatabase()
         self.use_web_data = use_web_data
         self.use_ocr = use_ocr
+        self.use_voice = use_voice
 
         self.web_data = None
         self.spider = None
@@ -73,8 +83,25 @@ class RealTimeAssistant:
         self.detector = GameDetector(use_web_data=use_web_data, use_ocr=use_ocr, ocr_engine=ocr_engine)
         logger.info("已启用内容索引引擎")
 
+        self.voice = None
+        if use_voice and VOICE_AVAILABLE:
+            try:
+                self.voice = VoiceAssistant(
+                    content_indexer=self.indexer,
+                    stt_engine=stt_engine,
+                    tts_engine=tts_engine,
+                )
+                status = self.voice.get_status()
+                if status['stt_available'] or status['tts_available']:
+                    logger.info(f"语音助手已启用 (识别: {status['stt_engine']}, 播报: {status['tts_engine']})")
+                else:
+                    logger.warning("语音引擎不可用")
+            except Exception as e:
+                logger.warning(f"语音助手初始化失败: {e}")
+
         self.last_ocr_text = ''
         self.last_analysis_time = 0
+        self.last_voice_result = None
 
     def analyze_screen_content(self, screen_text=None):
         """分析屏幕内容并返回智能推荐"""
@@ -122,6 +149,75 @@ class RealTimeAssistant:
         print("=" * 60)
         return result
 
+    def voice_query(self, timeout=5, phrase_time_limit=10):
+        """
+        语音查询：听 -> 识别意图 -> 搜索 -> 回复
+
+        Returns:
+            dict: 语音查询结果
+        """
+        if not self.voice:
+            return {
+                'text': '',
+                'intent': 'none',
+                'query': '',
+                'results': [],
+                'response': '语音助手不可用',
+                'spoken': False,
+            }
+
+        result = self.voice.process_voice(timeout=timeout, phrase_time_limit=phrase_time_limit)
+        self.last_voice_result = result
+        return result
+
+    def text_query(self, text):
+        """
+        文字查询（可用于手动输入）
+
+        Args:
+            text: 文字输入
+
+        Returns:
+            dict: 查询结果
+        """
+        if self.voice:
+            result = self.voice.process_text(text)
+            self.last_voice_result = result
+            return result
+
+        results = self.indexer.search(text, top_n=5)
+        return {
+            'text': text,
+            'intent': 'general_search',
+            'query': text,
+            'results': results,
+            'response': self._format_text_response(results),
+            'spoken': False,
+        }
+
+    def _format_text_response(self, results):
+        """格式化文字查询结果"""
+        if not results:
+            return f'未找到相关信息'
+        top = results[0]
+        name = top['data'].get('name', top['data'].get('title', ''))
+        return f'找到: {name}'
+
+    def speak(self, text, blocking=False):
+        """语音播报"""
+        if self.voice and self.voice.voice_output.available:
+            self.voice.voice_output.speak(text, blocking=blocking)
+
+    def start_voice_listening(self, wake_word=None, callback=None):
+        """启动语音持续监听"""
+        if self.voice:
+            self.voice.start_continuous_listening(wake_word=wake_word, callback=callback)
+
+    def stop_voice_listening(self):
+        """停止语音监听"""
+        if self.voice:
+            self.voice.stop_listening()
+
     def continuous_monitor(self, interval=5):
         """持续监控游戏状态"""
         print(f"\n开始持续监控（每 {interval} 秒更新一次）")
@@ -146,6 +242,8 @@ class RealTimeAssistant:
             self.web_data = self.spider.get_cached_data()
             self.indexer.reload_web_data(self.web_data)
             self.detector.indexer.reload_web_data(self.web_data)
+            if self.voice:
+                self.voice.set_indexer(self.indexer)
             print("网站数据已更新")
         else:
             print("网站爬虫不可用")
@@ -164,6 +262,21 @@ class RealTimeAssistant:
             'last_text': '',
         }
 
+    def get_voice_status(self):
+        """获取语音助手状态"""
+        if self.voice:
+            return self.voice.get_status()
+        return {
+            'stt_available': False,
+            'stt_engine': 'none',
+            'tts_available': False,
+            'tts_engine': 'none',
+            'is_listening': False,
+            'is_speaking': False,
+            'last_query': None,
+            'last_intent': None,
+        }
+
 
 def main():
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -174,11 +287,18 @@ def main():
 
     use_web = '--web' in sys.argv
     use_ocr = '--no-ocr' not in sys.argv
+    use_voice = '--no-voice' not in sys.argv
     ocr_engine = None
+    stt_engine = 'google'
+    tts_engine = 'auto'
 
     for arg in sys.argv:
         if arg.startswith('--ocr='):
             ocr_engine = arg.split('=')[1]
+        elif arg.startswith('--stt='):
+            stt_engine = arg.split('=')[1]
+        elif arg.startswith('--tts='):
+            tts_engine = arg.split('=')[1]
 
     mode_parts = []
     if use_web:
@@ -189,9 +309,18 @@ def main():
         mode_parts.append("OCR识别")
     else:
         mode_parts.append("模拟模式")
+    if use_voice:
+        mode_parts.append("语音交互")
     print(f"模式: {' + '.join(mode_parts)}")
 
-    assistant = RealTimeAssistant(use_web_data=use_web, use_ocr=use_ocr, ocr_engine=ocr_engine)
+    assistant = RealTimeAssistant(
+        use_web_data=use_web,
+        use_ocr=use_ocr,
+        ocr_engine=ocr_engine,
+        use_voice=use_voice,
+        stt_engine=stt_engine,
+        tts_engine=tts_engine,
+    )
 
     ocr_status = assistant.get_ocr_status()
     if ocr_status['available']:
@@ -199,8 +328,35 @@ def main():
     else:
         print("OCR引擎: 不可用（模拟模式）")
 
+    voice_status = assistant.get_voice_status()
+    if voice_status['stt_available']:
+        print(f"语音识别: {voice_status['stt_engine']}")
+    else:
+        print("语音识别: 不可用")
+    if voice_status['tts_available']:
+        print(f"语音播报: {voice_status['tts_engine']}")
+    else:
+        print("语音播报: 不可用")
+
     if '--continuous' in sys.argv:
         assistant.continuous_monitor()
+    elif '--voice' in sys.argv:
+        print("\n语音交互模式 - 请说话...")
+        while True:
+            try:
+                result = assistant.voice_query()
+                if result['text']:
+                    print(f"\n🎤 识别: {result['text']}")
+                    print(f"🎯 意图: {result['intent']} | 关键词: {result['query']}")
+                    print(f"💬 回复: {result['response']}")
+                    if result['results']:
+                        for r in result['results'][:3]:
+                            print(f"  [{r['category']}] {r['score']:.0%} - {r['data'].get('name', r['data'].get('title', ''))}")
+                else:
+                    print(".", end='', flush=True)
+            except KeyboardInterrupt:
+                print("\n语音模式已退出")
+                break
     elif '--search' in sys.argv:
         query = ' '.join([a for a in sys.argv[2:] if a != '--search' and not a.startswith('--')])
         if query:
