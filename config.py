@@ -75,7 +75,17 @@ HOTKEY_CONFIG = {
         'overlay_merc': 'ctrl+alt+m',
         'window_toggle': 'ctrl+alt+h',
         'refresh': 'ctrl+alt+r',
+        'damage_toggle': 'ctrl+alt+d',
     },
+}
+
+DAMAGE_CONFIG = {
+    'enabled': True,
+    'monitor_interval': 1.0,
+    'min_damage_number': 10,
+    'dps_window_seconds': 60,
+    'auto_start': False,
+    'ocr_region': 'chat_area',
 }
 
 LOG_LEVEL = 'INFO'
