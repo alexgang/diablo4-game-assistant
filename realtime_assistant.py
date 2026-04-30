@@ -43,6 +43,12 @@ try:
 except ImportError:
     VOICE_AVAILABLE = False
 
+try:
+    from overlay import OverlayPanel
+    OVERLAY_AVAILABLE = True
+except ImportError:
+    OVERLAY_AVAILABLE = False
+
 
 class RealTimeAssistant:
     """实时游戏助手"""
@@ -102,6 +108,9 @@ class RealTimeAssistant:
         self.last_ocr_text = ''
         self.last_analysis_time = 0
         self.last_voice_result = None
+
+        self.overlay = None
+        self.overlay_visible = False
 
     def analyze_screen_content(self, screen_text=None):
         """分析屏幕内容并返回智能推荐"""
@@ -247,6 +256,76 @@ class RealTimeAssistant:
             print("网站数据已更新")
         else:
             print("网站爬虫不可用")
+
+    def show_overlay(self, class_name=None, build_data=None):
+        """显示叠加层"""
+        if not OVERLAY_AVAILABLE:
+            logger.warning("叠加层模块不可用")
+            return False
+
+        if not self.overlay:
+            self.overlay = OverlayPanel(opacity=0.85)
+
+        if build_data:
+            self.overlay.update_from_build(class_name, build_data)
+        elif self.web_data:
+            self._update_overlay_with_web_data(class_name)
+
+        self.overlay.show_at_game_position()
+        self.overlay_visible = True
+        return True
+
+    def hide_overlay(self):
+        """隐藏叠加层"""
+        if self.overlay:
+            self.overlay.hide()
+            self.overlay_visible = False
+
+    def toggle_overlay(self):
+        """切换叠加层"""
+        if self.overlay_visible:
+            self.hide_overlay()
+        else:
+            self.show_overlay()
+
+    def update_overlay(self, class_name=None, build_data=None, equipment=None,
+                       skills=None, paragon=None, mercenary=None):
+        """更新叠加层内容"""
+        if not self.overlay:
+            return
+
+        if build_data:
+            self.overlay.update_from_build(class_name, build_data)
+            return
+
+        if equipment:
+            self.overlay.update_equipment(class_name, {'equipment': equipment, 'title': '装备推荐'})
+        if skills:
+            self.overlay.update_skills(class_name, {'skills': skills})
+        if paragon:
+            self.overlay.update_paragon(class_name, paragon)
+        if mercenary:
+            self.overlay.update_mercenary(class_name, mercenary)
+
+    def _update_overlay_with_web_data(self, class_name=None):
+        """用网站数据更新叠加层"""
+        if not self.web_data or not self.overlay:
+            return
+
+        build_details = self.web_data.get('build_details', [])
+        if build_details:
+            top_build = build_details[0]
+            self.overlay.update_from_build(class_name, top_build)
+            return
+
+        equipment = self.web_data.get('unique_items', [])
+        if equipment:
+            self.overlay.update_equipment(class_name, {'equipment': equipment[:10], 'title': '装备推荐'})
+
+        web_skills = self.web_data.get('skills', [])
+        if web_skills:
+            skill_names = [s.get('name', '') for s in web_skills[:15] if s.get('name')]
+            self.overlay.update_skills(class_name, {'skills': skill_names})
 
     def get_ocr_status(self):
         """获取OCR引擎状态"""
