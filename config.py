@@ -35,8 +35,19 @@ D4_REGIONS = {
     'minimap': {'x_ratio': 0.85, 'y_ratio': 0.0, 'w_ratio': 0.15, 'h_ratio': 0.15},
 }
 
+VOICE_CONFIG = {
+    'stt_engine': 'google',
+    'tts_engine': 'auto',
+    'language': 'zh-CN',
+    'tts_voice': 'zh-CN-XiaoxiaoNeural',
+    'tts_rate': 180,
+    'wake_word': '小助手',
+    'listen_timeout': 5,
+    'phrase_time_limit': 10,
+}
+
 GUI_WIDTH = 340
-GUI_HEIGHT = 600
+GUI_HEIGHT = 700
 GUI_ALWAYS_ON_TOP = True
 
 LOG_LEVEL = 'INFO'
