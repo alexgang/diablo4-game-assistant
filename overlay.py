@@ -100,8 +100,8 @@ class OverlayPanel(QWidget):
 
     def __init__(self, parent=None, opacity=None):
         super().__init__(parent)
-        cfg = OVERLAY_CONFIG
-        self.opacity = opacity if opacity is not None else cfg.get('opacity', 0.85)
+        self._cfg = OVERLAY_CONFIG
+        self.opacity = opacity if opacity is not None else self._cfg.get('opacity', 0.85)
         self._dragging = False
         self._drag_pos = None
         self._visible = True
@@ -194,8 +194,8 @@ class OverlayPanel(QWidget):
 
         main_layout.addWidget(self._container)
 
-        w = cfg.get('width', 320)
-        h = cfg.get('height', 480)
+        w = self._cfg.get('width', 320)
+        h = self._cfg.get('height', 480)
         self.setFixedSize(w, h)
 
     def _create_equip_tab(self):

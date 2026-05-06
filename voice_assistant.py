@@ -28,11 +28,7 @@ try:
 except ImportError:
     pass
 
-try:
-    import whisper
-    WHISPER_AVAILABLE = True
-except ImportError:
-    pass
+WHISPER_AVAILABLE = True
 
 try:
     import pyttsx3
@@ -63,6 +59,10 @@ class VoiceInput:
         self.language = language
         self.recognizer = None
         self.microphone = None
+        self._sd_device_index = None
+        self._sd_sample_rate = None
+        self._use_pyaudio = False
+        self._pyaudio_channels = 1
         self.whisper_model = None
         self.available = False
 
@@ -71,16 +71,85 @@ class VoiceInput:
             self.recognizer.energy_threshold = 300
             self.recognizer.dynamic_energy_threshold = True
             self.recognizer.pause_threshold = 0.8
-            try:
-                self.microphone = sr.Microphone()
-                with self.microphone as source:
-                    self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                logger.info("麦克风初始化成功")
-            except (OSError, AttributeError) as e:
-                logger.warning(f"麦克风不可用: {e}")
-                self.microphone = None
+            self._init_microphone()
 
         self._init_engine(engine)
+
+    def _init_microphone(self):
+        try:
+            import pyaudiowpatch as pyaudio
+            p = pyaudio.PyAudio()
+
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                if info.get('maxInputChannels', 0) > 0:
+                    name = info.get('name', '')
+                    is_loopback = 'loopback' in name.lower()
+                    sr_rate = int(info['defaultSampleRate'])
+                    try:
+                        stream = p.open(
+                            format=pyaudio.paInt16,
+                            channels=min(1, info['maxInputChannels']),
+                            rate=sr_rate,
+                            input=True,
+                            input_device_index=i,
+                            frames_per_buffer=1024,
+                        )
+                        data = stream.read(int(0.5 * sr_rate), exception_on_overflow=False)
+                        stream.stop_stream()
+                        stream.close()
+                        import numpy as np
+                        arr = np.frombuffer(data, dtype=np.int16)
+                        if np.max(np.abs(arr)) == 0 and not is_loopback:
+                            logger.warning(f"设备 [{i}] {name} 录音数据为空")
+                            continue
+                        self._sd_device_index = i
+                        self._sd_sample_rate = sr_rate
+                        self._use_pyaudio = True
+                        self._pyaudio_channels = min(1, info['maxInputChannels'])
+                        self.microphone = True
+                        mode = "系统音频回录" if is_loopback else "麦克风"
+                        logger.info(f"音频输入初始化成功: [{i}] {name} ({mode}, sr={sr_rate})")
+                        p.terminate()
+                        return
+                    except Exception as e:
+                        logger.warning(f"设备 [{i}] {name} 测试失败: {e}")
+                        continue
+
+            p.terminate()
+            logger.warning("未找到可用的音频输入设备（请在Windows声音设置中确认麦克风已启用）")
+        except ImportError:
+            self._try_sounddevice_fallback()
+        except Exception as e:
+            logger.warning(f"音频输入初始化失败: {e}")
+
+    def _try_sounddevice_fallback(self):
+        try:
+            import sounddevice as sd
+            import numpy as np
+            for i, dev in enumerate(sd.query_devices()):
+                if dev['max_input_channels'] > 0:
+                    sr_rate = int(dev['default_samplerate'])
+                    try:
+                        recording = sd.rec(int(0.5 * sr_rate), samplerate=sr_rate, channels=1, device=i, dtype='int16')
+                        sd.wait()
+                        if np.max(np.abs(recording)) == 0:
+                            continue
+                        self._sd_device_index = i
+                        self._sd_sample_rate = sr_rate
+                        self._use_pyaudio = False
+                        self._pyaudio_channels = 1
+                        self.microphone = True
+                        logger.info(f"音频输入初始化成功: [{i}] {dev['name']} (sr={sr_rate})")
+                        return
+                    except Exception:
+                        continue
+            logger.warning("未找到可用的音频输入设备")
+        except Exception as e:
+            logger.warning(f"sounddevice 回退也失败: {e}")
+
+    def _test_microphone(self, mic):
+        pass
 
     def _init_engine(self, preferred_engine=None):
         engines_to_try = [preferred_engine] if preferred_engine else self.ENGINES
@@ -99,7 +168,8 @@ class VoiceInput:
                     logger.info(f"语音识别引擎: Sphinx (离线)")
                     return
                 elif eng == 'whisper' and WHISPER_AVAILABLE:
-                    self.whisper_model = whisper.load_model("base")
+                    import whisper as _whisper
+                    self.whisper_model = _whisper.load_model("base")
                     self.engine_name = 'whisper'
                     self.available = True
                     logger.info(f"语音识别引擎: Whisper (离线)")
@@ -118,17 +188,12 @@ class VoiceInput:
             str: 识别出的文字，失败返回空字符串
         """
         if not self.available or not self.microphone:
-            logger.warning("语音输入不可用")
             return ''
 
         try:
-            with self.microphone as source:
-                audio = self.recognizer.listen(
-                    source,
-                    timeout=timeout,
-                    phrase_time_limit=phrase_time_limit,
-                )
-
+            audio = self._record_audio(timeout=timeout, phrase_time_limit=phrase_time_limit)
+            if audio is None:
+                return ''
             return self._recognize(audio)
 
         except sr.WaitTimeoutError:
@@ -138,6 +203,172 @@ class VoiceInput:
         except Exception as e:
             logger.error(f"语音识别失败: {e}")
             return ''
+
+    def _record_audio(self, timeout=5, phrase_time_limit=10):
+        import audioop
+        import time
+
+        device_index = self._sd_device_index
+        sample_rate = self._sd_sample_rate
+        chunk_size = 1024
+
+        if self._use_pyaudio:
+            return self._record_audio_pyaudio(device_index, sample_rate, chunk_size, timeout, phrase_time_limit)
+        else:
+            return self._record_audio_sounddevice(device_index, sample_rate, chunk_size, timeout, phrase_time_limit)
+
+    def _record_audio_pyaudio(self, device_index, sample_rate, chunk_size, timeout, phrase_time_limit):
+        import pyaudiowpatch as pyaudio
+        import audioop
+        import time
+
+        p = pyaudio.PyAudio()
+        stream = None
+        try:
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=self._pyaudio_channels,
+                rate=sample_rate,
+                input=True,
+                input_device_index=device_index,
+                frames_per_buffer=chunk_size,
+            )
+
+            frames = bytearray()
+            started = False
+            start_time = time.time()
+            silence_start = None
+
+            while True:
+                try:
+                    data = stream.read(chunk_size, exception_on_overflow=False)
+                except Exception:
+                    break
+
+                if self._pyaudio_channels > 1:
+                    import numpy as np
+                    arr = np.frombuffer(data, dtype=np.int16).reshape(-1, self._pyaudio_channels)
+                    data = arr[:, 0].tobytes()
+
+                frames.extend(data)
+                energy = audioop.rms(data, 2)
+
+                now = time.time()
+                elapsed = now - start_time
+
+                if energy > self.recognizer.energy_threshold:
+                    if not started:
+                        started = True
+                    silence_start = None
+                else:
+                    if started and silence_start is None:
+                        silence_start = now
+
+                if not started and elapsed > timeout:
+                    raise sr.WaitTimeoutError()
+
+                if started and silence_start and (now - silence_start) > self.recognizer.pause_threshold:
+                    break
+
+                if phrase_time_limit and started and elapsed > phrase_time_limit:
+                    break
+
+            frame_data = bytes(frames)
+            return sr.AudioData(frame_data, sample_rate, 2)
+
+        except sr.WaitTimeoutError:
+            raise
+        except Exception as e:
+            logger.error(f"录音失败: {e}")
+            return None
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
+    def _record_audio_sounddevice(self, device_index, sample_rate, chunk_size, timeout, phrase_time_limit):
+        import sounddevice as sd
+        import audioop
+        import time
+        import queue
+
+        audio_queue = queue.Queue()
+
+        def audio_callback(indata, frames, time_info, status):
+            audio_queue.put(indata.copy())
+
+        stream = None
+        try:
+            stream = sd.InputStream(
+                callback=audio_callback,
+                device=device_index,
+                channels=1,
+                samplerate=sample_rate,
+                dtype='int16',
+                blocksize=chunk_size,
+            )
+            stream.start()
+
+            frames = bytearray()
+            started = False
+            start_time = time.time()
+            silence_start = None
+
+            while True:
+                try:
+                    chunk = audio_queue.get(timeout=max(timeout, 1))
+                    buf = chunk.tobytes()
+                except queue.Empty:
+                    now = time.time()
+                    if not started and (now - start_time) > timeout:
+                        raise sr.WaitTimeoutError()
+                    continue
+
+                frames.extend(buf)
+                energy = audioop.rms(buf, 2)
+
+                now = time.time()
+                elapsed = now - start_time
+
+                if energy > self.recognizer.energy_threshold:
+                    if not started:
+                        started = True
+                    silence_start = None
+                else:
+                    if started and silence_start is None:
+                        silence_start = now
+
+                if not started and elapsed > timeout:
+                    raise sr.WaitTimeoutError()
+
+                if started and silence_start and (now - silence_start) > self.recognizer.pause_threshold:
+                    break
+
+                if phrase_time_limit and started and elapsed > phrase_time_limit:
+                    break
+
+            frame_data = bytes(frames)
+            return sr.AudioData(frame_data, sample_rate, 2)
+
+        except sr.WaitTimeoutError:
+            raise
+        except Exception as e:
+            logger.error(f"录音失败: {e}")
+            return None
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
 
     def recognize_from_file(self, audio_path):
         """从音频文件识别"""
@@ -461,8 +692,17 @@ class IntentRecognizer:
             query = query.replace(word, '')
         return query.strip()
 
-    def get_search_categories(self, intent):
-        """根据意图返回应搜索的分类"""
+    def get_search_categories(self, intent, class_name=None):
+        """
+        根据意图返回应搜索的分类
+
+        Args:
+            intent: 识别的意图类型
+            class_name: 识别到的职业名（如果有）
+
+        Returns:
+            list: 要搜索的分类列表，None表示搜索所有分类
+        """
         mapping = {
             'boss_info': ['bosses', 'boss_schedule'],
             'equipment_search': ['equipment', 'items'],
@@ -472,7 +712,12 @@ class IntentRecognizer:
             'location_guide': ['quests', 'guides'],
             'general_search': None,
         }
-        return mapping.get(intent, None)
+        categories = mapping.get(intent, None)
+
+        if class_name:
+            return None
+
+        return categories
 
 
 class VoiceAssistant:
@@ -551,7 +796,7 @@ class VoiceAssistant:
 
         results = []
         if self.indexer:
-            categories = self.intent_recognizer.get_search_categories(intent)
+            categories = self.intent_recognizer.get_search_categories(intent, class_name)
             results = self.indexer.search(search_query, top_n=5, categories=categories)
 
         self.last_results = results
@@ -586,7 +831,7 @@ class VoiceAssistant:
         data = top['data']
         score = top['score']
 
-        if intent == 'boss_info' or category == 'bosses':
+        if category == 'bosses':
             name = data.get('name', query)
             weakness = data.get('weakness', [])
             guide = data.get('guide', '')
@@ -596,7 +841,7 @@ class VoiceAssistant:
                 resp += f'攻略建议：{guide[:80]}'
             return resp
 
-        elif intent == 'equipment_search' or category in ('equipment', 'items'):
+        elif category in ('equipment', 'items'):
             name = data.get('name', query)
             rarity = data.get('rarity', '')
             desc = data.get('description', data.get('effect', ''))
@@ -605,29 +850,34 @@ class VoiceAssistant:
                 resp += f'效果：{desc[:60]}'
             return resp
 
-        elif intent == 'skill_search' or category in ('skills', 'web_skills'):
+        elif category in ('skills', 'web_skills'):
             name = data.get('name', query)
-            cls = data.get('class', data.get('category', ''))
-            desc = data.get('description', data.get('effect', ''))
-            resp = f'{name}'
-            if cls:
-                resp += f'（{cls}）'
-            if desc:
-                resp += f'：{desc[:60]}'
+            cls = data.get('class', data.get('name', ''))
+            builds = data.get('builds', {})
+            if builds:
+                build_list = ['、'.join(skills) for build_name, skills in builds.items()]
+                resp = f'{cls}推荐流派：{"；".join(build_list[:2])}'
+            else:
+                skills = data.get('skills', {})
+                if skills:
+                    skill_str = '、'.join([s for cat in list(skills.values())[:1] for s in cat[:4]])
+                    resp = f'{cls}核心技能：{skill_str}'
+                else:
+                    resp = f'{cls}'
             return resp
 
-        elif intent == 'build_search' or category == 'build_details':
+        elif category == 'build_details':
             title = data.get('title', query)
             cls = data.get('class', '')
-            desc = data.get('description', '')
+            skills_list = data.get('skills', [])
             resp = f'推荐构筑：{title}'
             if cls:
                 resp += f'（{cls}）'
-            if desc:
-                resp += f'。{desc[:60]}'
+            if skills_list:
+                resp += f'，核心技能：{skills_list[0]}'
             return resp
 
-        elif intent == 'quest_guide' or category == 'quests':
+        elif category == 'quests':
             name = data.get('name', query)
             location = data.get('location', '')
             guide = data.get('guide', '')
@@ -640,10 +890,10 @@ class VoiceAssistant:
 
         elif category == 'guides':
             title = data.get('title', query)
-            content = data.get('content', '')
+            tags = data.get('tags', [])
             resp = f'攻略：{title}'
-            if content:
-                resp += f'。{content[:60]}'
+            if tags:
+                resp += f'，标签：{tags[0]}'
             return resp
 
         else:

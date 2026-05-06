@@ -55,15 +55,43 @@ class GameOCR:
         logger.warning("所有OCR引擎均不可用，将使用模拟模式")
 
     def _init_paddleocr(self):
+        try:
+            import torch
+        except OSError:
+            pass
         from paddleocr import PaddleOCR
-        self.engine = PaddleOCR(
-            use_angle_cls=True,
-            lang='ch',
-            show_log=False,
-            use_gpu=False,
-            det_db_thresh=0.3,
-            det_db_box_thresh=0.5,
-        )
+        try:
+            self.engine = PaddleOCR(
+                use_angle_cls=True,
+                lang='ch',
+                show_log=False,
+                use_gpu=False,
+            )
+        except Exception:
+            self.engine = PaddleOCR(lang='ch')
+        self._paddleocr_uses_predict = hasattr(self.engine, 'predict') and not hasattr(self.engine, 'ocr')
+
+    def _paddleocr_call(self, img):
+        if self._paddleocr_uses_predict:
+            return self._paddleocr_call_v3(img)
+        return self.engine.ocr(img, cls=True)
+
+    def _paddleocr_call_v3(self, img):
+        import numpy as np
+        if isinstance(img, np.ndarray):
+            from PIL import Image
+            img = Image.fromarray(img[..., ::-1])
+        output = self.engine.predict(img)
+        result_lines = []
+        for res in output:
+            if hasattr(res, 'rec_texts'):
+                for i, text in enumerate(res.rec_texts):
+                    score = res.rec_scores[i] if hasattr(res, 'rec_scores') and i < len(res.rec_scores) else 0.0
+                    bbox = res.dt_polys[i].tolist() if hasattr(res, 'dt_polys') and i < len(res.dt_polys) else []
+                    result_lines.append([bbox, [text, float(score)]])
+        if result_lines:
+            return [result_lines]
+        return [[]]
 
     def _init_easyocr(self):
         import easyocr
@@ -110,7 +138,7 @@ class GameOCR:
 
     def preprocess_image(self, img, mode='auto'):
         """
-        预处理图像以提高OCR识别率
+        预处理图像以提高OCR识别率（轻量版，减少CPU占用）
 
         Args:
             img: BGR格式的numpy数组
@@ -124,7 +152,6 @@ class GameOCR:
         if mode == 'none':
             return img
 
-        from PIL import Image
         import cv2
 
         if len(img.shape) == 3:
@@ -142,28 +169,16 @@ class GameOCR:
                 mode = 'high_contrast'
 
         if mode == 'dark':
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(gray)
-            _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            denoised = cv2.medianBlur(binary, 2)
-            return denoised
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return binary
 
         elif mode == 'light':
             _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            denoised = cv2.medianBlur(binary, 2)
-            return denoised
+            return binary
 
         elif mode == 'high_contrast':
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(gray)
-            thresh = cv2.adaptiveThreshold(
-                enhanced, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                11, 2
-            )
-            denoised = cv2.medianBlur(thresh, 2)
-            return denoised
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return binary
 
         return gray
 
@@ -229,7 +244,7 @@ class GameOCR:
 
     def _ocr_paddleocr(self, img):
         try:
-            result = self.engine.ocr(img, cls=True)
+            result = self._paddleocr_call(img)
             if not result or not result[0]:
                 return ''
             texts = []
@@ -244,7 +259,7 @@ class GameOCR:
 
     def _ocr_paddleocr_detail(self, img):
         try:
-            result = self.engine.ocr(img, cls=True)
+            result = self._paddleocr_call(img)
             if not result or not result[0]:
                 return []
             details = []
