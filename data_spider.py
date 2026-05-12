@@ -36,9 +36,8 @@ class DiabloDataSpider:
     def _init_selenium(self):
         try:
             from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.chrome.service import Service
-            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.edge.options import Options
+            from selenium.webdriver.edge.service import Service
 
             options = Options()
             options.add_argument('--headless=new')
@@ -49,13 +48,31 @@ class DiabloDataSpider:
             options.add_argument('--lang=zh-CN')
             options.add_argument(f'--user-agent={self.headers["User-Agent"]}')
 
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
+            driver = webdriver.Edge(options=options)
             driver.set_page_load_timeout(30)
             return driver
         except Exception as e:
-            print(f"Selenium初始化失败: {e}")
-            return None
+            print(f"Edge浏览器初始化失败，尝试Chrome: {e}")
+            try:
+                from selenium import webdriver
+                from selenium.webdriver.chrome.options import Options
+                from selenium.webdriver.chrome.service import Service
+
+                options = Options()
+                options.add_argument('--headless=new')
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--window-size=1920,1080')
+                options.add_argument('--lang=zh-CN')
+                options.add_argument(f'--user-agent={self.headers["User-agent"]}')
+
+                driver = webdriver.Chrome(options=options)
+                driver.set_page_load_timeout(30)
+                return driver
+            except Exception as e2:
+                print(f"Selenium初始化失败: {e2}")
+                return None
 
     def _scroll_to_bottom(self, driver, max_scrolls=15, wait=2):
         for i in range(max_scrolls):

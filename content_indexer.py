@@ -221,9 +221,12 @@ class ContentIndexer:
 
         cn_chars = re.findall(r'[\u4e00-\u9fff]{2,}', text)
         for phrase in cn_chars:
+            phrase = phrase.strip()
             for i in range(len(phrase)):
                 for j in range(i + 2, min(i + 6, len(phrase) + 1)):
-                    words.add(phrase[i:j])
+                    word = phrase[i:j].strip()
+                    if word and word not in stop_words:
+                        words.add(word)
 
         en_words = re.findall(r'[a-zA-Z]{2,}', text)
         words.update(w for w in en_words if w not in stop_words)
@@ -234,30 +237,18 @@ class ContentIndexer:
         return words
 
     def _calc_relevance(self, query_keywords, entry_keywords):
-        """计算相关度分数"""
+        """计算相关度分数（优化版）"""
         if not query_keywords or not entry_keywords:
             return 0.0
 
         exact_matches = query_keywords & entry_keywords
         exact_score = len(exact_matches) * 2.0
 
-        fuzzy_score = 0.0
-        unmatched_query = query_keywords - entry_keywords
-        unmatched_entry = entry_keywords - query_keywords
-
-        for qk in unmatched_query:
-            best_ratio = 0.0
-            for ek in unmatched_entry:
-                ratio = SequenceMatcher(None, qk, ek).ratio()
-                best_ratio = max(best_ratio, ratio)
-            if best_ratio > 0.6:
-                fuzzy_score += best_ratio
-
         total_possible = len(query_keywords)
         if total_possible == 0:
             return 0.0
 
-        return (exact_score + fuzzy_score) / total_possible
+        return exact_score / total_possible
 
     def search(self, screen_text, top_n=5, categories=None):
         """

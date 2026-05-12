@@ -2,104 +2,431 @@
 """
 OCR文字识别模块 - 从游戏画面中提取文字
 
-使用Tesseract OCR识别游戏中的文字，
-实现真正的实时游戏状态检测。
+支持多引擎：
+1. PaddleOCR（推荐，中文识别效果最好）
+2. EasyOCR（备选，多语言支持好）
+3. Tesseract（传统方案，需要额外安装）
 
-如果没有安装Tesseract，会自动使用模拟模式。
+自动检测可用引擎，按优先级选择。
 """
 
-import cv2
-import numpy as np
-from PIL import Image
 import os
-import random
+import re
+import logging
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class GameOCR:
-    """游戏画面OCR识别"""
+    """游戏画面OCR识别 - 多引擎支持"""
 
-    def __init__(self):
-        self.custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789一-龥'
-        
-        # 检查 tesseract 是否可用
-        self.tesseract_available = False
+    ENGINES = ['paddleocr', 'easyocr', 'tesseract']
+
+    def __init__(self, engine=None, lang='ch'):
+        self.lang = lang
+        self.engine_name = None
+        self.engine = None
+        self.tesseract_cmd = None
+        self._init_engine(engine)
+
+    def _init_engine(self, preferred_engine=None):
+        engines_to_try = [preferred_engine] if preferred_engine else self.ENGINES
+        for eng in engines_to_try:
+            if eng is None:
+                continue
+            try:
+                if eng == 'paddleocr':
+                    self._init_paddleocr()
+                elif eng == 'easyocr':
+                    self._init_easyocr()
+                elif eng == 'tesseract':
+                    self._init_tesseract()
+                else:
+                    continue
+                if self.engine is not None:
+                    self.engine_name = eng
+                    logger.info(f"OCR引擎已启用: {eng}")
+                    return
+            except Exception as e:
+                logger.debug(f"OCR引擎 {eng} 初始化失败: {e}")
+                continue
+
+        logger.warning("所有OCR引擎均不可用，将使用模拟模式")
+
+    def _init_paddleocr(self):
         try:
-            import pytesseract
-            import subprocess
-            import os
-            
-            # 尝试设置Tesseract路径（Windows）
-            tesseract_paths = [
-                r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-                r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
-                r'D:\Program Files\Tesseract-OCR\tesseract.exe',
-            ]
-            
-            # 首先检查是否设置了路径
-            found = False
-            for path in tesseract_paths:
-                if os.path.exists(path):
-                    pytesseract.pytesseract.tesseract_cmd = path
-                    found = True
-                    break
-            
-            # 尝试运行 tesseract 检查是否可用
-            if found:
-                subprocess.run(
-                    [pytesseract.pytesseract.tesseract_cmd, '--version'],
-                    capture_output=True,
-                    timeout=5
+            import torch
+        except OSError:
+            pass
+        from paddleocr import PaddleOCR
+        try:
+            self.engine = PaddleOCR(
+                use_angle_cls=True,
+                lang='ch',
+                show_log=False,
+                use_gpu=False,
+            )
+        except Exception:
+            self.engine = PaddleOCR(lang='ch')
+        self._paddleocr_uses_predict = hasattr(self.engine, 'predict') and not hasattr(self.engine, 'ocr')
+
+    def _paddleocr_call(self, img):
+        if self._paddleocr_uses_predict:
+            return self._paddleocr_call_v3(img)
+        return self.engine.ocr(img, cls=True)
+
+    def _paddleocr_call_v3(self, img):
+        import numpy as np
+        if isinstance(img, np.ndarray):
+            from PIL import Image
+            img = Image.fromarray(img[..., ::-1])
+        output = self.engine.predict(img)
+        result_lines = []
+        for res in output:
+            if hasattr(res, 'rec_texts'):
+                for i, text in enumerate(res.rec_texts):
+                    score = res.rec_scores[i] if hasattr(res, 'rec_scores') and i < len(res.rec_scores) else 0.0
+                    bbox = res.dt_polys[i].tolist() if hasattr(res, 'dt_polys') and i < len(res.dt_polys) else []
+                    result_lines.append([bbox, [text, float(score)]])
+        if result_lines:
+            return [result_lines]
+        return [[]]
+
+    def _init_easyocr(self):
+        import easyocr
+        langs = ['ch_sim', 'en'] if self.lang == 'ch' else ['en']
+        self.engine = easyocr.Reader(langs, gpu=False)
+
+    def _init_tesseract(self):
+        import pytesseract
+        import subprocess
+
+        tesseract_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+            r'D:\Program Files\Tesseract-OCR\tesseract.exe',
+            '/usr/bin/tesseract',
+            '/usr/local/bin/tesseract',
+        ]
+
+        for path in tesseract_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                self.tesseract_cmd = path
+                break
+
+        if not self.tesseract_cmd:
+            try:
+                result = subprocess.run(
+                    ['tesseract', '--version'],
+                    capture_output=True, timeout=5
                 )
-                self.tesseract_available = True
-                print("✓ Tesseract OCR 已启用")
+                if result.returncode == 0:
+                    self.tesseract_cmd = 'tesseract'
+            except Exception:
+                pass
+
+        if self.tesseract_cmd:
+            self.engine = pytesseract
+        else:
+            raise Exception("未找到 Tesseract 可执行文件")
+
+    @property
+    def available(self):
+        return self.engine is not None
+
+    def preprocess_image(self, img, mode='auto'):
+        """
+        预处理图像以提高OCR识别率（轻量版，减少CPU占用）
+
+        Args:
+            img: BGR格式的numpy数组
+            mode: 预处理模式
+                - 'auto': 自动选择
+                - 'dark': 暗色背景（游戏常见）
+                - 'light': 亮色背景
+                - 'high_contrast': 高对比度
+                - 'none': 不处理
+        """
+        if mode == 'none':
+            return img
+
+        import cv2
+
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img.copy()
+
+        if mode == 'auto':
+            mean_val = np.mean(gray)
+            if mean_val < 80:
+                mode = 'dark'
+            elif mean_val > 180:
+                mode = 'light'
             else:
-                raise Exception("未找到 Tesseract 可执行文件")
-        except Exception as e:
-            self.tesseract_available = False
-            print(f"提示: Tesseract OCR 不可用 ({str(e)})，将使用模拟模式")
+                mode = 'high_contrast'
 
-    def preprocess_image(self, img):
-        """预处理图像以提高识别率"""
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if mode == 'dark':
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return binary
 
-        thresh = cv2.adaptiveThreshold(
-            gray, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            11, 2
-        )
+        elif mode == 'light':
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            return binary
 
-        denoised = cv2.medianBlur(thresh, 3)
-        return denoised
+        elif mode == 'high_contrast':
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return binary
 
-    def extract_text(self, img, region=None):
-        """从图像中提取文字"""
-        if not self.tesseract_available:
-            # 模拟返回一些游戏相关的文字
+        return gray
+
+    def extract_text(self, img, region=None, preprocess='auto'):
+        """
+        从图像中提取文字
+
+        Args:
+            img: BGR格式的numpy数组
+            region: (x, y, w, h) 感兴趣区域
+            preprocess: 预处理模式
+
+        Returns:
+            识别出的文字字符串
+        """
+        if not self.available:
             return self._get_simulation_text()
 
-        try:
-            import pytesseract
-        except ImportError:
-            return self._get_simulation_text()
+        import cv2
 
         if region:
             x, y, w, h = region
-            img = img[y:y+h, x:x+w]
+            x, y, w, h = max(0, x), max(0, y), max(1, w), max(1, h)
+            img = img[y:y + h, x:x + w]
 
-        processed = self.preprocess_image(img)
-        pil_img = Image.fromarray(processed)
+        processed = self.preprocess_image(img, mode=preprocess)
 
-        text = pytesseract.image_to_string(
-            pil_img,
-            lang='chi_sim+eng',
-            config=self.custom_config
-        )
+        if self.engine_name == 'paddleocr':
+            return self._ocr_paddleocr(processed)
+        elif self.engine_name == 'easyocr':
+            return self._ocr_easyocr(processed)
+        elif self.engine_name == 'tesseract':
+            return self._ocr_tesseract(processed)
 
-        return text.strip()
+        return ''
+
+    def extract_text_with_confidence(self, img, region=None, preprocess='auto'):
+        """
+        提取文字及置信度
+
+        Returns:
+            list of {'text': str, 'confidence': float, 'bbox': list}
+        """
+        if not self.available:
+            return [{'text': self._get_simulation_text(), 'confidence': 0.0, 'bbox': []}]
+
+        import cv2
+
+        if region:
+            x, y, w, h = region
+            img = img[y:y + h, x:x + w]
+
+        processed = self.preprocess_image(img, mode=preprocess)
+
+        if self.engine_name == 'paddleocr':
+            return self._ocr_paddleocr_detail(processed)
+        elif self.engine_name == 'easyocr':
+            return self._ocr_easyocr_detail(processed)
+        elif self.engine_name == 'tesseract':
+            return self._ocr_tesseract_detail(processed)
+
+        return []
+
+    def _ocr_paddleocr(self, img):
+        try:
+            result = self._paddleocr_call(img)
+            if not result or not result[0]:
+                return ''
+            texts = []
+            for line in result[0]:
+                if line and len(line) >= 2:
+                    text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
+                    texts.append(text)
+            return ' '.join(texts)
+        except Exception as e:
+            logger.error(f"PaddleOCR识别失败: {e}")
+            return ''
+
+    def _ocr_paddleocr_detail(self, img):
+        try:
+            result = self._paddleocr_call(img)
+            if not result or not result[0]:
+                return []
+            details = []
+            for line in result[0]:
+                if line and len(line) >= 2:
+                    bbox = line[0] if isinstance(line[0], list) else []
+                    text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
+                    conf = line[1][1] if isinstance(line[1], (list, tuple)) and len(line[1]) > 1 else 0.0
+                    details.append({
+                        'text': text,
+                        'confidence': float(conf),
+                        'bbox': bbox,
+                    })
+            return details
+        except Exception as e:
+            logger.error(f"PaddleOCR识别失败: {e}")
+            return []
+
+    def _ocr_easyocr(self, img):
+        try:
+            from PIL import Image
+            if len(img.shape) == 2:
+                pil_img = Image.fromarray(img)
+            else:
+                import cv2
+                pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            results = self.engine.readtext(np.array(pil_img))
+            texts = [r[1] for r in results if r[1]]
+            return ' '.join(texts)
+        except Exception as e:
+            logger.error(f"EasyOCR识别失败: {e}")
+            return ''
+
+    def _ocr_easyocr_detail(self, img):
+        try:
+            from PIL import Image
+            if len(img.shape) == 2:
+                pil_img = Image.fromarray(img)
+            else:
+                import cv2
+                pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            results = self.engine.readtext(np.array(pil_img))
+            details = []
+            for r in results:
+                details.append({
+                    'text': r[1],
+                    'confidence': float(r[2]),
+                    'bbox': r[0],
+                })
+            return details
+        except Exception as e:
+            logger.error(f"EasyOCR识别失败: {e}")
+            return []
+
+    def _ocr_tesseract(self, img):
+        try:
+            from PIL import Image
+            pil_img = Image.fromarray(img)
+            config = r'--oem 3 --psm 6'
+            text = self.engine.image_to_string(pil_img, lang='chi_sim+eng', config=config)
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Tesseract识别失败: {e}")
+            return ''
+
+    def _ocr_tesseract_detail(self, img):
+        try:
+            from PIL import Image
+            pil_img = Image.fromarray(img)
+            config = r'--oem 3 --psm 6'
+            data = self.engine.image_to_data(pil_img, lang='chi_sim+eng', config=config, output_type=self.engine.Output.DICT)
+            details = []
+            for i in range(len(data['text'])):
+                text = data['text'][i].strip()
+                conf = int(data['conf'][i])
+                if text and conf > 30:
+                    details.append({
+                        'text': text,
+                        'confidence': conf / 100.0,
+                        'bbox': [
+                            data['left'][i], data['top'][i],
+                            data['left'][i] + data['width'][i],
+                            data['top'][i] + data['height'][i]
+                        ],
+                    })
+            return details
+        except Exception as e:
+            logger.error(f"Tesseract识别失败: {e}")
+            return []
+
+    @staticmethod
+    def postprocess_text(text):
+        """
+        OCR文本后处理 - 清理和规范化识别结果
+
+        - 去除多余空白
+        - 修正常见OCR错误
+        - 过滤无意义片段
+        """
+        if not text:
+            return ''
+
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        corrections = {
+            '安达利尔': ['安达利尔', '安达利爾', '安达利尔'],
+            '都瑞尔': ['都瑞尔', '都瑞爾'],
+            '墨菲斯托': ['墨菲斯托', '墨菲斯托'],
+            '暗黑破坏神': ['暗黑破坏神', '暗黑破壞神'],
+            '巴尔': ['巴尔', '巴爾'],
+            '迪亚波罗': ['迪亚波罗', '迪亞波羅'],
+        }
+        for correct, variants in corrections.items():
+            for variant in variants:
+                text = text.replace(variant, correct)
+
+        noise_patterns = [
+            r'[^\u4e00-\u9fff\w\s·\-—,.;:!?()（）\[\]【】/\\|+]',
+            r'\b[a-z]{1,2}\b',
+        ]
+        for pattern in noise_patterns:
+            text = re.sub(pattern, '', text)
+
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
+    def extract_quest_text(self, img):
+        quest_region = (100, 50, 400, 100)
+        text = self.extract_text(img, region=quest_region, preprocess='dark')
+        return self.postprocess_text(text)
+
+    def extract_location_text(self, img):
+        location_region = (50, 50, 200, 50)
+        text = self.extract_text(img, region=location_region, preprocess='dark')
+        return self.postprocess_text(text)
+
+    def extract_boss_name(self, img):
+        boss_region = (400, 300, 800, 100)
+        text = self.extract_text(img, region=boss_region, preprocess='dark')
+        return self.postprocess_text(text)
+
+    def extract_skill_text(self, img):
+        skill_region = (600, 800, 700, 200)
+        text = self.extract_text(img, region=skill_region, preprocess='dark')
+        return self.postprocess_text(text)
+
+    def extract_item_text(self, img):
+        item_region = (800, 200, 400, 600)
+        text = self.extract_text(img, region=item_region, preprocess='dark')
+        return self.postprocess_text(text)
+
+    def full_screen_analysis(self, img):
+        """全屏文字分析 - 返回各区域识别结果"""
+        result = {
+            'quest': self.extract_quest_text(img),
+            'location': self.extract_location_text(img),
+            'boss': self.extract_boss_name(img),
+            'skill': self.extract_skill_text(img),
+            'item': self.extract_item_text(img),
+        }
+        all_texts = [v for v in result.values() if v]
+        result['full_text'] = ' '.join(all_texts)
+        result['engine'] = self.engine_name or 'simulation'
+        return result
 
     def _get_simulation_text(self):
-        """返回模拟的游戏文字（用于演示）"""
+        import random
         simulation_texts = [
             "杀死安达利尔",
             "任务：寻找凯恩之书",
@@ -113,92 +440,171 @@ class GameOCR:
             "墨菲斯托",
             "暗黑破坏神",
             "世界之石要塞",
-            "巴尔"
+            "巴尔",
+            "野蛮人 旋风斩",
+            "术士 开荒",
+            "暗金 护符",
         ]
         return random.choice(simulation_texts)
 
-    def extract_quest_text(self, img):
-        """提取任务相关文字"""
-        quest_region = (100, 50, 400, 100)
-        return self.extract_text(img, quest_region)
 
-    def extract_location_text(self, img):
-        """提取位置相关文字"""
-        location_region = (50, 50, 200, 50)
-        return self.extract_text(img, location_region)
+class GameWindowDetector:
+    """游戏窗口检测 - 自动定位游戏窗口区域"""
 
-    def extract_boss_name(self, img):
-        """提取BOSS名称"""
-        boss_region = (400, 300, 800, 100)
-        return self.extract_text(img, boss_region)
+    D4_WINDOW_PATTERNS = {
+        'quest_area': {'x_ratio': 0.0, 'y_ratio': 0.0, 'w_ratio': 0.25, 'h_ratio': 0.1},
+        'location_area': {'x_ratio': 0.0, 'y_ratio': 0.9, 'w_ratio': 0.15, 'h_ratio': 0.05},
+        'boss_area': {'x_ratio': 0.25, 'y_ratio': 0.15, 'w_ratio': 0.5, 'h_ratio': 0.08},
+        'skill_bar': {'x_ratio': 0.3, 'y_ratio': 0.85, 'w_ratio': 0.4, 'h_ratio': 0.12},
+        'item_tooltip': {'x_ratio': 0.5, 'y_ratio': 0.1, 'w_ratio': 0.25, 'h_ratio': 0.5},
+        'chat_area': {'x_ratio': 0.0, 'y_ratio': 0.5, 'w_ratio': 0.25, 'h_ratio': 0.4},
+        'minimap': {'x_ratio': 0.85, 'y_ratio': 0.0, 'w_ratio': 0.15, 'h_ratio': 0.15},
+    }
 
-    def full_screen_analysis(self, img):
-        """全屏文字分析"""
-        result = {
-            'quest': self.extract_quest_text(img),
-            'location': self.extract_location_text(img),
-            'boss': self.extract_boss_name(img)
-        }
-        return result
+    @classmethod
+    def get_region(cls, img_shape, area_name):
+        """根据图像尺寸和区域名称计算像素坐标"""
+        if area_name not in cls.D4_WINDOW_PATTERNS:
+            return None
+        pattern = cls.D4_WINDOW_PATTERNS[area_name]
+        h, w = img_shape[:2]
+        x = int(w * pattern['x_ratio'])
+        y = int(h * pattern['y_ratio'])
+        rw = int(w * pattern['w_ratio'])
+        rh = int(h * pattern['h_ratio'])
+        return (x, y, rw, rh)
+
+    @classmethod
+    def get_all_regions(cls, img_shape):
+        """获取所有检测区域"""
+        regions = {}
+        for name in cls.D4_WINDOW_PATTERNS:
+            regions[name] = cls.get_region(img_shape, name)
+        return regions
 
 
 class GameStateRecognizer:
     """游戏状态识别器 - 基于OCR"""
 
-    def __init__(self):
-        self.ocr = GameOCR()
+    def __init__(self, ocr_engine=None):
+        self.ocr = GameOCR(engine=ocr_engine)
+        self.window_detector = GameWindowDetector()
 
         self.quest_keywords = {
-            '安达利尔': 'andariel',
-            '都瑞尔': 'duriel',
-            '墨菲斯托': 'mephisto',
-            '暗黑破坏神': 'diablo',
-            '巴尔': 'baal',
-            '迪卡凯恩': 'q1',
-            '血鸟': 'q2',
-            '凯恩之书': 'q3',
-            '赫拉迪克': 'q5'
+            '安达利尔': 'andariel', '都瑞尔': 'duriel', '墨菲斯托': 'mephisto',
+            '暗黑破坏神': 'diablo', '巴尔': 'baal', '迪卡凯恩': 'q1',
+            '血鸟': 'q2', '凯恩之书': 'q3', '赫拉迪克': 'q5',
         }
 
         self.location_keywords = {
-            '罗格营地': 'act1',
-            '邪恶洞穴': 'act1_dungeon',
-            '冰冷之原': 'act1_outside',
-            '埋骨之地': 'act1_crypt',
-            '修道院': 'act1_monastery',
-            '鲁·高因': 'act2',
-            '库拉斯特': 'act3',
-            '群魔堡垒': 'act4',
-            '哈洛加斯': 'act5'
+            '罗格营地': 'act1', '邪恶洞穴': 'act1_dungeon',
+            '冰冷之原': 'act1_outside', '埋骨之地': 'act1_crypt',
+            '修道院': 'act1_monastery', '鲁·高因': 'act2',
+            '库拉斯特': 'act3', '群魔堡垒': 'act4', '哈洛加斯': 'act5',
+        }
+
+        self.class_keywords = {
+            '野蛮人': 'barbarian', '巫师': 'sorcerer', '德鲁伊': 'druid',
+            '游侠': 'rogue', '死灵法师': 'necromancer', '灵巫': 'spiritborn',
+            '圣骑士': 'paladin', '术士': 'warlock',
         }
 
     def recognize_quest(self, text):
-        """识别任务"""
         for keyword, quest_id in self.quest_keywords.items():
             if keyword in text:
                 return quest_id
         return None
 
     def recognize_location(self, text):
-        """识别位置"""
         for keyword, location_id in self.location_keywords.items():
             if keyword in text:
                 return location_id
         return None
 
+    def recognize_class(self, text):
+        for keyword, class_id in self.class_keywords.items():
+            if keyword in text:
+                return class_id
+        return None
+
     def analyze_image(self, img):
-        """分析游戏画面"""
-        text = self.ocr.extract_text(img)
+        """分析游戏画面 - 智能区域检测"""
+        regions = self.window_detector.get_all_regions(img.shape)
+
+        region_texts = {}
+        for name, region in regions.items():
+            if region:
+                text = self.ocr.extract_text(img, region=region, preprocess='dark')
+                region_texts[name] = GameOCR.postprocess_text(text)
+
+        full_text = ' '.join(v for v in region_texts.values() if v)
+
+        result = {
+            'raw_text': full_text,
+            'quest': self.recognize_quest(full_text),
+            'location': self.recognize_location(full_text),
+            'class': self.recognize_class(full_text),
+            'regions': region_texts,
+            'engine': self.ocr.engine_name or 'simulation',
+        }
+
+        return result
+
+    def analyze_image_full(self, img):
+        """全屏OCR分析（不分区）"""
+        text = self.ocr.extract_text(img, preprocess='auto')
+        text = GameOCR.postprocess_text(text)
 
         result = {
             'raw_text': text,
             'quest': self.recognize_quest(text),
-            'location': self.recognize_location(text)
+            'location': self.recognize_location(text),
+            'class': self.recognize_class(text),
+            'engine': self.ocr.engine_name or 'simulation',
         }
 
         return result
 
 
 if __name__ == "__main__":
-    print("OCR模块测试")
-    print("注意：需要安装 Tesseract OCR 和 pytesseract")
+    import sys
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+    print("=" * 50)
+    print("  OCR模块测试")
+    print("=" * 50)
+
+    ocr = GameOCR()
+    print(f"\n当前引擎: {ocr.engine_name or '模拟模式'}")
+    print(f"可用状态: {'可用' if ocr.available else '不可用'}")
+
+    if len(sys.argv) > 1:
+        import cv2
+        img_path = sys.argv[1]
+        if os.path.exists(img_path):
+            img = cv2.imread(img_path)
+            print(f"\n图像尺寸: {img.shape}")
+
+            text = ocr.extract_text(img)
+            print(f"\n识别结果:\n{text}")
+
+            print("\n--- 详细结果 ---")
+            details = ocr.extract_text_with_confidence(img)
+            for d in details:
+                print(f"  [{d['confidence']:.1%}] {d['text']}")
+
+            print("\n--- 区域分析 ---")
+            recognizer = GameStateRecognizer()
+            result = recognizer.analyze_image(img)
+            for k, v in result.items():
+                if k != 'regions':
+                    print(f"  {k}: {v}")
+                else:
+                    for rk, rv in v.items():
+                        if rv:
+                            print(f"  区域[{rk}]: {rv}")
+        else:
+            print(f"文件不存在: {img_path}")
+    else:
+        print("\n用法: python ocr_recognizer.py <图片路径>")
+        print("不提供图片时仅显示引擎状态")

@@ -1,14 +1,12 @@
 import os
 
-# 项目根目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 资源目录
 RESOURCES_DIR = os.path.join(BASE_DIR, 'resources')
 IMAGES_DIR = os.path.join(RESOURCES_DIR, 'images')
 DATA_DIR = os.path.join(RESOURCES_DIR, 'data')
+CACHE_DIR = os.path.join(BASE_DIR, 'cache')
 
-# 屏幕捕获区域配置 (根据游戏窗口大小调整)
 SCREEN_REGION = {
     'left': 0,
     'top': 0,
@@ -16,19 +14,83 @@ SCREEN_REGION = {
     'height': 1080
 }
 
-# 识别配置
 CONFIDENCE_THRESHOLD = 0.8
-SCAN_INTERVAL = 1.0  # 扫描间隔（秒）
+SCAN_INTERVAL = 2.0
 
-# GUI配置
-GUI_WIDTH = 300
-GUI_HEIGHT = 500
+OCR_CONFIG = {
+    'engine': 'auto',
+    'lang': 'ch',
+    'preprocess': 'auto',
+    'cache_ttl': 2.0,
+    'min_text_length': 2,
+}
+
+D4_REGIONS = {
+    'quest_area': {'x_ratio': 0.0, 'y_ratio': 0.0, 'w_ratio': 0.25, 'h_ratio': 0.1},
+    'location_area': {'x_ratio': 0.0, 'y_ratio': 0.9, 'w_ratio': 0.15, 'h_ratio': 0.05},
+    'boss_area': {'x_ratio': 0.25, 'y_ratio': 0.15, 'w_ratio': 0.5, 'h_ratio': 0.08},
+    'skill_bar': {'x_ratio': 0.3, 'y_ratio': 0.85, 'w_ratio': 0.4, 'h_ratio': 0.12},
+    'item_tooltip': {'x_ratio': 0.5, 'y_ratio': 0.1, 'w_ratio': 0.25, 'h_ratio': 0.5},
+    'chat_area': {'x_ratio': 0.0, 'y_ratio': 0.5, 'w_ratio': 0.25, 'h_ratio': 0.4},
+    'minimap': {'x_ratio': 0.85, 'y_ratio': 0.0, 'w_ratio': 0.15, 'h_ratio': 0.15},
+}
+
+VOICE_CONFIG = {
+    'stt_engine': 'google',
+    'tts_engine': 'auto',
+    'language': 'zh-CN',
+    'tts_voice': 'zh-CN-XiaoxiaoNeural',
+    'tts_rate': 180,
+    'wake_word': '小助手',
+    'listen_timeout': 5,
+    'phrase_time_limit': 10,
+}
+
+GUI_WIDTH = 340
+GUI_HEIGHT = 700
 GUI_ALWAYS_ON_TOP = True
 
-# 日志配置
+OVERLAY_CONFIG = {
+    'enabled': True,
+    'opacity': 0.85,
+    'width': 320,
+    'height': 480,
+    'position': 'right',
+    'auto_show': False,
+    'default_tab': 0,
+    'click_through': False,
+    'font_size': 9,
+    'show_rarity_colors': True,
+    'show_slot_icons': True,
+}
+
+HOTKEY_CONFIG = {
+    'enabled': True,
+    'bindings': {
+        'voice_toggle': 'ctrl+alt+v',
+        'overlay_toggle': 'ctrl+alt+o',
+        'overlay_equip': 'ctrl+alt+e',
+        'overlay_skill': 'ctrl+alt+s',
+        'overlay_paragon': 'ctrl+alt+p',
+        'overlay_merc': 'ctrl+alt+m',
+        'window_toggle': 'ctrl+alt+h',
+        'refresh': 'ctrl+alt+r',
+        'damage_toggle': 'ctrl+alt+d',
+    },
+}
+
+DAMAGE_CONFIG = {
+    'enabled': True,
+    'monitor_interval': 1.0,
+    'min_damage_number': 10,
+    'dps_window_seconds': 60,
+    'auto_start': False,
+    'ocr_region': 'chat_area',
+}
+
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
 
-# 确保目录存在
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
