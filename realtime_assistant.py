@@ -23,6 +23,13 @@ from game_data import GameDatabase
 from game_detector import GameDetector
 from content_indexer import ContentIndexer
 
+try:
+    from sdk_client import GamingAssistantSDK
+    from config import SDK_CONFIG
+    SDK_AVAILABLE = True
+except ImportError:
+    SDK_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -54,7 +61,8 @@ class RealTimeAssistant:
     """实时游戏助手"""
 
     def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None,
-                 use_voice=True, stt_engine='google', tts_engine='auto'):
+                 use_voice=True, stt_engine='google', tts_engine='auto',
+                 use_sdk=True, instance_id='default'):
         self.screen_capture = ScreenCapture()
         self.game_db = GameDatabase()
         self.use_web_data = use_web_data
@@ -112,12 +120,43 @@ class RealTimeAssistant:
         self.overlay = None
         self.overlay_visible = False
 
+        self.sdk = None
+        self.sdk_available = False
+        if use_sdk and SDK_AVAILABLE:
+            try:
+                sdk = GamingAssistantSDK()
+                if sdk.check_server():
+                    sdk.init_all(instance_id)
+                    self.sdk = sdk
+                    self.sdk_available = True
+                    logger.info("SDK服务已启用")
+                else:
+                    logger.warning("SDK服务不可用，使用本地模式")
+            except Exception as e:
+                logger.warning(f"SDK初始化失败: {e}")
+
     def analyze_screen_content(self, screen_text=None):
         """分析屏幕内容并返回智能推荐"""
         if screen_text is None:
             screen_text = self.detector.get_screen_text()
 
         self.last_ocr_text = screen_text
+
+        if self.sdk_available:
+            try:
+                sdk_result = self.sdk.knowledge_query(screen_text)
+                if sdk_result:
+                    recommendations = sdk_result.get('recommendations', [])
+                    return {
+                        'screen_text': screen_text,
+                        'recommendations': recommendations,
+                        'formatted': sdk_result.get('formatted', self.indexer.format_recommendations(recommendations)),
+                        'ocr_engine': self.ocr.engine_name if self.ocr and self.ocr.available else 'simulation',
+                        'source': 'sdk',
+                    }
+            except Exception as e:
+                logger.warning(f"SDK查询失败，回退到本地分析: {e}")
+
         recommendations = self.indexer.get_context_recommendations(screen_text)
 
         return {
@@ -125,6 +164,7 @@ class RealTimeAssistant:
             'recommendations': recommendations,
             'formatted': self.indexer.format_recommendations(recommendations),
             'ocr_engine': self.ocr.engine_name if self.ocr and self.ocr.available else 'simulation',
+            'source': 'local',
         }
 
     def analyze_and_report(self):
@@ -189,6 +229,22 @@ class RealTimeAssistant:
         Returns:
             dict: 查询结果
         """
+        if self.sdk_available:
+            try:
+                sdk_result = self.sdk.knowledge_query(text)
+                if sdk_result:
+                    return {
+                        'text': text,
+                        'intent': sdk_result.get('intent', 'general_search'),
+                        'query': text,
+                        'results': sdk_result.get('results', []),
+                        'response': sdk_result.get('response', self._format_text_response(sdk_result.get('results', []))),
+                        'spoken': False,
+                        'source': 'sdk',
+                    }
+            except Exception as e:
+                logger.warning(f"SDK文字查询失败，回退到本地搜索: {e}")
+
         if self.voice:
             result = self.voice.process_text(text)
             self.last_voice_result = result
@@ -241,6 +297,14 @@ class RealTimeAssistant:
 
     def search(self, query, top_n=5):
         """手动搜索游戏内容"""
+        if self.sdk_available:
+            try:
+                sdk_results = self.sdk.mmr_query(query, top_n=top_n)
+                if sdk_results:
+                    return sdk_results
+            except Exception as e:
+                logger.warning(f"SDK搜索失败，回退到本地索引: {e}")
+
         results = self.indexer.search(query, top_n=top_n)
         return results
 
@@ -354,6 +418,13 @@ class RealTimeAssistant:
             'is_speaking': False,
             'last_query': None,
             'last_intent': None,
+        }
+
+    def get_sdk_status(self):
+        """获取SDK服务状态"""
+        return {
+            'available': self.sdk_available,
+            'server_url': SDK_CONFIG['server_url'],
         }
 
 

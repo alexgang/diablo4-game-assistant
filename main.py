@@ -25,6 +25,8 @@ import sys
 import os
 import logging
 
+from config import SDK_CONFIG
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -55,6 +57,8 @@ def main():
             stt_engine = arg.split('=')[1]
         elif arg.startswith('--tts='):
             tts_engine = arg.split('=')[1]
+        elif arg.startswith('--sdk-url='):
+            SDK_CONFIG['server_url'] = arg.split('=', 1)[1]
 
     if use_cli:
         run_cli_mode(use_web, use_ocr, ocr_engine, use_voice, stt_engine, tts_engine)
@@ -67,6 +71,17 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
     try:
         from gui import MainWindow
         from PyQt5.QtWidgets import QApplication
+
+        sdk_url = SDK_CONFIG['server_url']
+        try:
+            from sdk_client import GamingAssistantSDK
+            sdk = GamingAssistantSDK(sdk_url)
+            if sdk.check_server():
+                print(f"SDK服务器已连接: {sdk_url}")
+            else:
+                print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
+        except Exception:
+            print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
 
         print("启动图形界面...")
         app = QApplication(sys.argv)
@@ -90,6 +105,17 @@ def run_cli_mode(use_web=False, use_ocr=True, ocr_engine=None,
                  use_voice=True, stt_engine='google', tts_engine='auto'):
     """命令行模式"""
     from realtime_assistant import RealTimeAssistant
+
+    sdk_url = SDK_CONFIG['server_url']
+    try:
+        from sdk_client import GamingAssistantSDK
+        sdk = GamingAssistantSDK(sdk_url)
+        if sdk.check_server():
+            print(f"SDK服务器已连接: {sdk_url}")
+        else:
+            print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
+    except Exception:
+        print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
 
     assistant = RealTimeAssistant(
         use_web_data=use_web,

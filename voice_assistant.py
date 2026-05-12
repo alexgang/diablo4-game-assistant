@@ -15,6 +15,9 @@ import logging
 import threading
 from collections import OrderedDict
 
+from sdk_client import GamingAssistantSDK
+from config import SDK_CONFIG
+
 logger = logging.getLogger(__name__)
 
 SPEECH_REC_AVAILABLE = False
@@ -54,7 +57,7 @@ class VoiceInput:
 
     ENGINES = ['google', 'sphinx', 'whisper']
 
-    def __init__(self, engine='google', language='zh-CN'):
+    def __init__(self, engine='google', language='zh-CN', use_sdk_asr=True):
         self.engine_name = None
         self.language = language
         self.recognizer = None
@@ -65,6 +68,20 @@ class VoiceInput:
         self._pyaudio_channels = 1
         self.whisper_model = None
         self.available = False
+        self.use_sdk_asr = use_sdk_asr
+        self.sdk = None
+        self.sdk_available = False
+
+        if self.use_sdk_asr:
+            try:
+                self.sdk = GamingAssistantSDK(SDK_CONFIG['server_url'])
+                if self.sdk.check_server():
+                    self.sdk_available = True
+                    logger.info("SDK ASR 服务已连接")
+                else:
+                    logger.warning("SDK ASR 服务不可用，将回退到本地引擎")
+            except Exception as e:
+                logger.warning(f"SDK ASR 初始化失败: {e}")
 
         if SPEECH_REC_AVAILABLE:
             self.recognizer = sr.Recognizer()
@@ -387,8 +404,36 @@ class VoiceInput:
             logger.error(f"文件识别失败: {e}")
             return ''
 
+    def _transcribe_with_sdk(self, audio_data):
+        """使用SDK ASR服务进行语音识别"""
+        import tempfile
+        import os
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                temp_path = f.name
+            with open(temp_path, 'wb') as f:
+                f.write(audio_data.get_wav_data())
+            text = self.sdk.asr_transcribe(temp_path, hotwords=SDK_CONFIG['asr']['hotwords'])
+            return text.strip() if text else ''
+        except Exception as e:
+            logger.error(f"SDK ASR 识别失败: {e}")
+            return ''
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
     def _recognize(self, audio):
         """调用识别引擎"""
+        if self.use_sdk_asr and self.sdk_available:
+            text = self._transcribe_with_sdk(audio)
+            if text:
+                return text
+            logger.warning("SDK ASR 识别失败，回退到本地引擎")
+
         try:
             if self.engine_name == 'google':
                 text = self.recognizer.recognize_google(audio, language=self.language)
@@ -584,26 +629,29 @@ class IntentRecognizer:
     """意图识别 - 解析玩家语音为搜索意图"""
 
     INTENT_PATTERNS = OrderedDict([
-        ('boss_info', [
-            r'(?:怎么打|攻略|打法|弱点|技巧).{0,4}(.+)',
-            r'(.+).{0,4}(?:怎么打|攻略|打法|弱点|技巧)',
-            r'(?:查|看|问).{0,2}BOSS.{0,2}(.+)',
-            r'(.+?)(?:boss|BOSS|首领|王)',
-        ]),
-        ('equipment_search', [
-            r'(?:查|找|看|搜|有没有).{0,4}(.+?)(?:装备|武器|护甲|暗金|传奇|套装)',
-            r'(.+?)(?:装备|武器|护甲|暗金|传奇|套装).{0,4}(?:推荐|在哪|怎么得|掉落)',
-            r'(?:推荐|最好的).{0,4}(.+?)(?:装备|武器)',
-        ]),
         ('skill_search', [
-            r'(?:查|找|看).{0,4}(.+?)(?:技能|天赋|加点)',
-            r'(.+?)(?:技能|天赋|加点).{0,4}(?:推荐|怎么加|攻略)',
+            r'(.+?)(?:技能|天赋|加点)',
             r'(.+?)(?:怎么加点|技能搭配|天赋树)',
+            r'(.+?)(?:升级|开荒|练级).{0,4}(?:攻略|推荐|路线)',
         ]),
         ('build_search', [
             r'(?:查|找|看|搜).{0,4}(.+?)(?:构筑|BD|build|流派)',
             r'(.+?)(?:构筑|BD|build|流派).{0,4}(?:推荐|攻略)',
             r'(.+?)(?:最强|热门|推荐).{0,2}(?:构筑|BD|build|流派)',
+            r'(.+?)(?:升级|开荒).{0,4}(?:流派|BD|build)',
+        ]),
+        ('boss_info', [
+            r'怎么打(.+)',
+            r'(.+?)怎么打',
+            r'(.+?)(?:打法|弱点|技巧)',
+            r'(?:查|看|问).{0,2}BOSS.{0,2}(.+)',
+            r'(.+?)(?:boss|BOSS|首领|王)',
+            r'(.+?)(?:攻略)',
+        ]),
+        ('equipment_search', [
+            r'(?:查|找|看|搜|有没有).{0,4}(.+?)(?:装备|武器|护甲|暗金|传奇|套装)',
+            r'(.+?)(?:装备|武器|护甲|暗金|传奇|套装).{0,4}(?:推荐|在哪|怎么得|掉落)',
+            r'(?:推荐|最好的).{0,4}(.+?)(?:装备|武器)',
         ]),
         ('quest_guide', [
             r'(?:怎么|如何).{0,4}(?:完成|做|过).{0,4}(.+?)(?:任务|主线|支线)',
@@ -706,8 +754,8 @@ class IntentRecognizer:
         mapping = {
             'boss_info': ['bosses', 'boss_schedule'],
             'equipment_search': ['equipment', 'items'],
-            'skill_search': ['skills', 'web_skills'],
-            'build_search': ['build_details', 'web_skills'],
+            'skill_search': ['skills', 'web_skills', 'build_details'],
+            'build_search': ['build_details', 'web_skills', 'skills'],
             'quest_guide': ['quests', 'guides'],
             'location_guide': ['quests', 'guides'],
             'general_search': None,
@@ -715,7 +763,9 @@ class IntentRecognizer:
         categories = mapping.get(intent, None)
 
         if class_name:
-            return None
+            if intent in ('boss_info', 'general_search'):
+                return ['skills', 'build_details', 'web_skills', 'bosses']
+            return categories
 
         return categories
 
@@ -725,7 +775,7 @@ class VoiceAssistant:
 
     def __init__(self, content_indexer=None, stt_engine='google', tts_engine='auto',
                  voice=None, language='zh-CN'):
-        self.voice_input = VoiceInput(engine=stt_engine, language=language)
+        self.voice_input = VoiceInput(engine=stt_engine, language=language, use_sdk_asr=SDK_CONFIG['asr']['enabled'])
         self.voice_output = VoiceOutput(engine=tts_engine, voice=voice)
         self.intent_recognizer = IntentRecognizer()
         self.indexer = content_indexer
@@ -956,6 +1006,7 @@ class VoiceAssistant:
         return {
             'stt_available': self.voice_input.available,
             'stt_engine': self.voice_input.engine_name or 'none',
+            'sdk_asr_available': self.voice_input.sdk_available,
             'tts_available': self.voice_output.available,
             'tts_engine': self.voice_output.engine_name or 'none',
             'is_listening': self.is_listening,

@@ -107,126 +107,133 @@ class GuideWidget(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setSpacing(4)
+        self.setStyleSheet("background-color: transparent;")
 
         self.title_label = QLabel("游戏指引")
         self.title_label.setFont(QFont('Microsoft YaHei', 14, QFont.Bold))
-        self.title_label.setStyleSheet("color: #ff6b35;")
+        self.title_label.setStyleSheet("color: #ff6b35; background-color: transparent;")
         layout.addWidget(self.title_label)
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #8b0000;")
+        line.setStyleSheet("background-color: rgba(139,0,0,0.5);")
         layout.addWidget(line)
 
         self.ocr_status_group = QWidget()
+        self.ocr_status_group.setStyleSheet("background-color: transparent;")
         ocr_layout = QVBoxLayout()
         ocr_layout.setSpacing(2)
         self.ocr_status_title = QLabel("OCR状态")
         self.ocr_status_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.ocr_status_title.setStyleSheet("color: #00bfff;")
+        self.ocr_status_title.setStyleSheet("color: #00bfff; background-color: transparent;")
         ocr_layout.addWidget(self.ocr_status_title)
         self.ocr_engine_label = QLabel("引擎: 检测中...")
-        self.ocr_engine_label.setStyleSheet("color: #aaa;")
+        self.ocr_engine_label.setStyleSheet("color: #aaa; background-color: transparent;")
         ocr_layout.addWidget(self.ocr_engine_label)
         self.ocr_text_label = QLabel("识别文字: --")
         self.ocr_text_label.setWordWrap(True)
-        self.ocr_text_label.setStyleSheet("color: #ccc; font-size: 11px;")
+        self.ocr_text_label.setStyleSheet("color: #ccc; font-size: 11px; background-color: transparent;")
         ocr_layout.addWidget(self.ocr_text_label)
         self.ocr_status_group.setLayout(ocr_layout)
         layout.addWidget(self.ocr_status_group)
 
         self.voice_status_group = QWidget()
+        self.voice_status_group.setStyleSheet("background-color: transparent;")
         voice_layout = QVBoxLayout()
         voice_layout.setSpacing(2)
         self.voice_status_title = QLabel("语音助手")
         self.voice_status_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.voice_status_title.setStyleSheet("color: #9b59b6;")
+        self.voice_status_title.setStyleSheet("color: #9b59b6; background-color: transparent;")
         voice_layout.addWidget(self.voice_status_title)
         self.voice_stt_label = QLabel("识别: 检测中...")
-        self.voice_stt_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.voice_stt_label.setStyleSheet("color: #aaa; font-size: 11px; background-color: transparent;")
         voice_layout.addWidget(self.voice_stt_label)
         self.voice_tts_label = QLabel("播报: 检测中...")
-        self.voice_tts_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.voice_tts_label.setStyleSheet("color: #aaa; font-size: 11px; background-color: transparent;")
         voice_layout.addWidget(self.voice_tts_label)
         self.voice_last_label = QLabel("最近查询: --")
         self.voice_last_label.setWordWrap(True)
-        self.voice_last_label.setStyleSheet("color: #ccc; font-size: 11px;")
+        self.voice_last_label.setStyleSheet("color: #ccc; font-size: 11px; background-color: transparent;")
         voice_layout.addWidget(self.voice_last_label)
         self.voice_response_label = QLabel("回复: --")
         self.voice_response_label.setWordWrap(True)
-        self.voice_response_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        self.voice_response_label.setStyleSheet("color: #4ade80; font-size: 11px; background-color: transparent;")
         voice_layout.addWidget(self.voice_response_label)
         self.voice_status_group.setLayout(voice_layout)
         layout.addWidget(self.voice_status_group)
 
         self.damage_group = QWidget()
+        self.damage_group.setStyleSheet("background-color: transparent;")
         dmg_layout = QVBoxLayout()
         dmg_layout.setSpacing(2)
         self.damage_title = QLabel("⚔️ 伤害分析")
         self.damage_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.damage_title.setStyleSheet("color: #e74c3c;")
+        self.damage_title.setStyleSheet("color: #e74c3c; background-color: transparent;")
         dmg_layout.addWidget(self.damage_title)
         self.damage_dps_label = QLabel("DPS: --")
-        self.damage_dps_label.setStyleSheet("color: #ff6b35; font-size: 12px; font-weight: bold;")
+        self.damage_dps_label.setStyleSheet("color: #ff6b35; font-size: 12px; font-weight: bold; background-color: transparent;")
         dmg_layout.addWidget(self.damage_dps_label)
         self.damage_crit_label = QLabel("暴击率: --")
-        self.damage_crit_label.setStyleSheet("color: #f1c40f; font-size: 11px;")
+        self.damage_crit_label.setStyleSheet("color: #f1c40f; font-size: 11px; background-color: transparent;")
         dmg_layout.addWidget(self.damage_crit_label)
         self.damage_tier_label = QLabel("评级: --")
-        self.damage_tier_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.damage_tier_label.setStyleSheet("color: #aaa; font-size: 11px; background-color: transparent;")
         dmg_layout.addWidget(self.damage_tier_label)
         self.damage_skill_label = QLabel("主力技能: --")
-        self.damage_skill_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        self.damage_skill_label.setStyleSheet("color: #4ade80; font-size: 11px; background-color: transparent;")
         dmg_layout.addWidget(self.damage_skill_label)
         self.damage_advice_label = QLabel("建议: --")
         self.damage_advice_label.setWordWrap(True)
-        self.damage_advice_label.setStyleSheet("color: #ccc; font-size: 11px;")
+        self.damage_advice_label.setStyleSheet("color: #ccc; font-size: 11px; background-color: transparent;")
         dmg_layout.addWidget(self.damage_advice_label)
         self.damage_group.setLayout(dmg_layout)
         self.damage_group.hide()
         layout.addWidget(self.damage_group)
 
         self.quest_group = QWidget()
+        self.quest_group.setStyleSheet("background-color: transparent;")
         quest_layout = QVBoxLayout()
         quest_layout.setSpacing(2)
         self.quest_title = QLabel("当前任务")
         self.quest_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.quest_title.setStyleSheet("color: #ffd700;")
+        self.quest_title.setStyleSheet("color: #ffd700; background-color: transparent;")
         quest_layout.addWidget(self.quest_title)
         self.quest_content = QTextEdit()
         self.quest_content.setReadOnly(True)
         self.quest_content.setMaximumHeight(80)
-        self.quest_content.setStyleSheet("background-color: rgba(0,0,0,0.5); color: #e0e0e0; border: none; font-size: 12px;")
+        self.quest_content.setStyleSheet("background-color: rgba(0,0,0,0.3); color: #e0e0e0; border: none; font-size: 12px;")
         quest_layout.addWidget(self.quest_content)
         self.quest_group.setLayout(quest_layout)
         layout.addWidget(self.quest_group)
 
         self.boss_group = QWidget()
+        self.boss_group.setStyleSheet("background-color: transparent;")
         boss_layout = QVBoxLayout()
         boss_layout.setSpacing(2)
         self.boss_title = QLabel("BOSS信息")
         self.boss_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.boss_title.setStyleSheet("color: #ff6b35;")
+        self.boss_title.setStyleSheet("color: #ff6b35; background-color: transparent;")
         boss_layout.addWidget(self.boss_title)
         self.boss_content = QTextEdit()
         self.boss_content.setReadOnly(True)
         self.boss_content.setMaximumHeight(80)
-        self.boss_content.setStyleSheet("background-color: rgba(0,0,0,0.5); color: #e0e0e0; border: none; font-size: 12px;")
+        self.boss_content.setStyleSheet("background-color: rgba(0,0,0,0.3); color: #e0e0e0; border: none; font-size: 12px;")
         boss_layout.addWidget(self.boss_content)
         self.boss_group.setLayout(boss_layout)
         layout.addWidget(self.boss_group)
 
         self.recommend_group = QWidget()
+        self.recommend_group.setStyleSheet("background-color: transparent;")
         recommend_layout = QVBoxLayout()
         recommend_layout.setSpacing(2)
         self.recommend_title = QLabel("推荐建议")
         self.recommend_title.setFont(QFont('Microsoft YaHei', 11, QFont.Bold))
-        self.recommend_title.setStyleSheet("color: #4ade80;")
+        self.recommend_title.setStyleSheet("color: #4ade80; background-color: transparent;")
         recommend_layout.addWidget(self.recommend_title)
         self.recommend_content = QTextEdit()
         self.recommend_content.setReadOnly(True)
         self.recommend_content.setMaximumHeight(200)
-        self.recommend_content.setStyleSheet("background-color: rgba(0,0,0,0.5); color: #e0e0e0; border: none; font-size: 11px;")
+        self.recommend_content.setStyleSheet("background-color: rgba(0,0,0,0.3); color: #e0e0e0; border: none; font-size: 11px;")
         recommend_layout.addWidget(self.recommend_content)
         self.recommend_group.setLayout(recommend_layout)
         layout.addWidget(self.recommend_group)
@@ -241,9 +248,12 @@ class GuideWidget(QWidget):
         ocr_engine = analysis.get('ocr_engine', 'simulation')
         screen_text = analysis.get('screen_text', '')
 
-        if ocr_engine and ocr_engine != 'simulation':
+        if ocr_engine == 'sdk':
+            self.ocr_engine_label.setText("引擎: SDK (Intel)")
+            self.ocr_engine_label.setStyleSheet("color: #4ade80; background-color: transparent;")
+        elif ocr_engine and ocr_engine != 'simulation':
             self.ocr_engine_label.setText(f"引擎: {ocr_engine}")
-            self.ocr_engine_label.setStyleSheet("color: #4ade80;")
+            self.ocr_engine_label.setStyleSheet("color: #4ade80; background-color: transparent;")
         else:
             self.ocr_engine_label.setText("引擎: 模拟模式")
             self.ocr_engine_label.setStyleSheet("color: #ff6b35;")
@@ -386,30 +396,30 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 340, 700)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        self.setWindowOpacity(0.92)
-        palette = QPalette()
-        palette.setColor(QPalette.Background, QColor(20, 20, 40))
-        self.setPalette(palette)
+        self.setWindowOpacity(0.85)
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
         central_widget = QWidget()
+        central_widget.setStyleSheet("background-color: rgba(20, 20, 40, 200);")
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         layout.setSpacing(4)
 
         header = QWidget()
+        header.setStyleSheet("background-color: transparent;")
         header_layout = QHBoxLayout(header)
         header_layout.setSpacing(8)
 
         self.title_label = QLabel("暗黑破坏神助手")
         self.title_label.setFont(QFont('Microsoft YaHei', 12, QFont.Bold))
-        self.title_label.setStyleSheet("color: #ff6b35;")
+        self.title_label.setStyleSheet("color: #ff6b35; background-color: transparent;")
         header_layout.addWidget(self.title_label)
 
         ocr_status = self.detector.ocr_recognizer.ocr.engine_name if self.detector.ocr_recognizer else 'none'
         ocr_color = '#4ade80' if ocr_status and ocr_status != 'none' else '#ff6b35'
         self.ocr_indicator = QLabel(f"OCR: {ocr_status or 'N/A'}")
         self.ocr_indicator.setFont(QFont('Microsoft YaHei', 9))
-        self.ocr_indicator.setStyleSheet(f"color: {ocr_color};")
+        self.ocr_indicator.setStyleSheet(f"color: {ocr_color}; background-color: transparent;")
         header_layout.addWidget(self.ocr_indicator)
 
         voice_status = self.voice_assistant.get_status() if self.voice_assistant else {}
@@ -418,15 +428,23 @@ class MainWindow(QMainWindow):
         voice_color = '#9b59b6' if (stt != 'none' or tts != 'none') else '#666'
         self.voice_indicator = QLabel(f"Voice: {stt}/{tts}")
         self.voice_indicator.setFont(QFont('Microsoft YaHei', 8))
-        self.voice_indicator.setStyleSheet(f"color: {voice_color};")
+        self.voice_indicator.setStyleSheet(f"color: {voice_color}; background-color: transparent;")
         header_layout.addWidget(self.voice_indicator)
 
         hotkey_color = '#e67e22' if HOTKEY_AVAILABLE else '#666'
         self.hotkey_indicator = QLabel("⌨" if HOTKEY_AVAILABLE else "")
         self.hotkey_indicator.setFont(QFont('Microsoft YaHei', 9))
-        self.hotkey_indicator.setStyleSheet(f"color: {hotkey_color};")
+        self.hotkey_indicator.setStyleSheet(f"color: {hotkey_color}; background-color: transparent;")
         self.hotkey_indicator.setToolTip(self._get_hotkey_tooltip() if HOTKEY_AVAILABLE else "")
         header_layout.addWidget(self.hotkey_indicator)
+
+        self.sdk_indicator = QLabel("SDK")
+        self.sdk_indicator.setFont(QFont('Microsoft YaHei', 9))
+        if self.detector.sdk_available:
+            self.sdk_indicator.setStyleSheet("color: #4ade80; font-weight: bold; background-color: transparent;")
+        else:
+            self.sdk_indicator.setStyleSheet("color: #666; background-color: transparent;")
+        header_layout.addWidget(self.sdk_indicator)
 
         header_layout.addStretch()
 
@@ -440,16 +458,17 @@ class MainWindow(QMainWindow):
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #8b0000;")
+        line.setStyleSheet("background-color: rgba(139,0,0,0.5);")
         layout.addWidget(line)
 
         search_widget = QWidget()
+        search_widget.setStyleSheet("background-color: transparent;")
         search_layout = QHBoxLayout(search_widget)
         search_layout.setSpacing(4)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("搜索游戏内容...")
         self.search_input.setStyleSheet(
-            "background-color: rgba(0,0,0,0.5); color: #e0e0e0; border: 1px solid #444; "
+            "background-color: rgba(0,0,0,0.3); color: #e0e0e0; border: 1px solid rgba(68,68,68,0.5); "
             "border-radius: 3px; padding: 4px 8px; font-size: 12px;"
         )
         self.search_input.returnPressed.connect(self.manual_search)
@@ -457,7 +476,7 @@ class MainWindow(QMainWindow):
 
         self.search_btn = QPushButton("搜索")
         self.search_btn.setStyleSheet(
-            "background-color: #0066cc; color: white; border: none; "
+            "background-color: rgba(0,102,204,0.7); color: white; border: none; "
             "border-radius: 3px; padding: 4px 10px; font-size: 12px;"
         )
         self.search_btn.clicked.connect(self.manual_search)
@@ -466,6 +485,8 @@ class MainWindow(QMainWindow):
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("background-color: transparent; border: none;")
+        scroll_area.viewport().setStyleSheet("background-color: transparent;")
         self.guide_widget = GuideWidget()
         scroll_area.setWidget(self.guide_widget)
         layout.addWidget(scroll_area)
@@ -824,6 +845,14 @@ class MainWindow(QMainWindow):
         if not self.is_paused:
             self.guide_widget.update_guide(analysis)
             self._update_overlay_from_analysis(analysis)
+            self._update_sdk_status()
+
+    def _update_sdk_status(self):
+        """更新SDK状态指示器"""
+        if self.detector.sdk_available:
+            self.sdk_indicator.setStyleSheet("color: #4ade80; font-weight: bold; background-color: transparent;")
+        else:
+            self.sdk_indicator.setStyleSheet("color: #666; background-color: transparent;")
 
     def toggle_overlay(self):
         """切换叠加层显示"""

@@ -88,6 +88,39 @@ DAMAGE_CONFIG = {
     'ocr_region': 'chat_area',
 }
 
+SDK_CONFIG = {
+    'server_url': os.environ.get('GAS_SERVER_URL', 'http://127.0.0.1:9190'),
+    'instance_id': 'd4_assistant',
+    'vision': {
+        'enabled': True,
+        'mode': 'accurate',
+        'threshold': -1,
+        'threshold_2': -1,
+        'topk': 3,
+    },
+    'knowledge': {
+        'enabled': True,
+        'knowledge_id': 'd4_guide',
+    },
+    'memory': {
+        'enabled': True,
+    },
+    'mmr': {
+        'enabled': True,
+        'topk': 5,
+        'threshold': 0.3,
+    },
+    'asr': {
+        'enabled': True,
+        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 圣骑士 游侠',
+    },
+    'bar': {
+        'enabled': True,
+        'boss_id': '',
+        'k_actions': 3,
+    },
+}
+
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
 

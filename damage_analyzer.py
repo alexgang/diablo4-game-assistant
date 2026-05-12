@@ -22,6 +22,9 @@ import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from sdk_client import GamingAssistantSDK
+from config import SDK_CONFIG
+
 logger = logging.getLogger(__name__)
 
 DAMAGE_PATTERNS = [
@@ -390,7 +393,7 @@ class BuildComparator:
 class DamageMonitor:
     """伤害监控器 - 持续监控并分析伤害"""
 
-    def __init__(self, ocr_recognizer=None, content_indexer=None):
+    def __init__(self, ocr_recognizer=None, content_indexer=None, use_sdk_bar=True):
         self.ocr = ocr_recognizer
         self.parser = DamageLogParser()
         self.stats = DamageStatistics()
@@ -402,6 +405,26 @@ class DamageMonitor:
         self.player_class = ''
         self._log_buffer = []
         self._last_ocr_time = 0.0
+
+        self.bar_available = False
+        self._sdk = None
+        self._bar_instance_id = None
+        self._boss_id = SDK_CONFIG.get('bar_boss_id', 'default_boss')
+        self._k_actions = SDK_CONFIG.get('bar_k_actions', 3)
+        self._last_bar_result = None
+
+        if use_sdk_bar:
+            try:
+                self._sdk = GamingAssistantSDK()
+                if self._sdk.check_server():
+                    self._bar_instance_id = self._sdk.bar_init(SDK_CONFIG.get('instance_id', 'default'))
+                    self.bar_available = True
+                    logger.info("SDK BAR 服务初始化成功")
+                else:
+                    logger.warning("SDK BAR 服务不可用")
+            except Exception as e:
+                self.bar_available = False
+                logger.warning(f"SDK BAR 服务初始化失败: {e}")
 
     def start_monitoring(self, callback=None):
         """开始监控"""
@@ -438,6 +461,8 @@ class DamageMonitor:
         if not self.ocr or not self.ocr.ocr.available:
             return
 
+        bar_result = None
+
         try:
             from screen_capture import ScreenCapture
             capture = ScreenCapture()
@@ -457,6 +482,17 @@ class DamageMonitor:
             else:
                 text = self.ocr.ocr.extract_text(img, preprocess='dark')
 
+            if self.bar_available:
+                try:
+                    import tempfile
+                    import cv2
+                    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                    cv2.imwrite(tmp.name, img)
+                    tmp.close()
+                    bar_result = self.recognize_boss_action(tmp.name)
+                except Exception as e:
+                    logger.error(f"BAR 帧分析失败: {e}")
+
             if text:
                 events = self.parser.parse_text(text)
                 if events:
@@ -466,8 +502,44 @@ class DamageMonitor:
                     if self.on_update:
                         self.on_update(self.get_report())
 
+            if bar_result:
+                if self.on_update:
+                    report = self.get_report()
+                    report['boss_action'] = bar_result
+                    self.on_update(report)
+
         except Exception as e:
             logger.error(f"伤害捕获失败: {e}")
+
+    def recognize_boss_action(self, frame_path):
+        """通过SDK BAR服务识别Boss动作"""
+        if not self.bar_available or not self._sdk:
+            return None
+
+        try:
+            result = self._sdk.bar_query(
+                self._bar_instance_id,
+                self._boss_id,
+                frame_path,
+                self._k_actions,
+            )
+            self._last_bar_result = result
+            return {
+                'boss_id': result.get('boss_id', self._boss_id),
+                'action_id': result.get('action_id', ''),
+                'score': result.get('score', 0.0),
+            }
+        except Exception as e:
+            logger.error(f"BAR 识别失败: {e}")
+            return None
+
+    def get_boss_status(self):
+        """获取当前Boss识别状态"""
+        return {
+            'bar_available': self.bar_available,
+            'boss_id': self._boss_id,
+            'last_result': self._last_bar_result,
+        }
 
     def feed_log_text(self, text):
         """手动输入日志文本进行分析"""
