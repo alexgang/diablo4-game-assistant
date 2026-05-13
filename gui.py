@@ -864,6 +864,11 @@ class MainWindow(QMainWindow):
     def _create_overlay_panel(self):
         if GraphicalOverlay is not None:
             panel = GraphicalOverlay(opacity=0.85)
+            try:
+                from screen_capture import ScreenCapture
+                panel.init_capture(ScreenCapture())
+            except Exception:
+                panel.init_capture()
         elif OverlayPanel is not None:
             panel = OverlayPanel(opacity=0.85)
         else:
