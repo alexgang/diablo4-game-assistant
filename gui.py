@@ -26,10 +26,17 @@ from game_detector import GameDetector
 logger = logging.getLogger(__name__)
 
 try:
-    from overlay import OverlayPanel
+    from graphical_overlay import GraphicalOverlay
     OVERLAY_AVAILABLE = True
 except ImportError:
-    OVERLAY_AVAILABLE = False
+    try:
+        from overlay import OverlayPanel
+        GraphicalOverlay = None
+        OVERLAY_AVAILABLE = True
+    except ImportError:
+        GraphicalOverlay = None
+        OverlayPanel = None
+        OVERLAY_AVAILABLE = False
 
 try:
     from voice_assistant import VoiceAssistant
@@ -415,9 +422,9 @@ class MainWindow(QMainWindow):
         self.title_label.setStyleSheet("color: #ff6b35; background-color: transparent;")
         header_layout.addWidget(self.title_label)
 
-        ocr_status = self.detector.ocr_recognizer.ocr.engine_name if self.detector.ocr_recognizer else 'none'
-        ocr_color = '#4ade80' if ocr_status and ocr_status != 'none' else '#ff6b35'
-        self.ocr_indicator = QLabel(f"OCR: {ocr_status or 'N/A'}")
+        ocr_status = 'sdk' if self.detector.sdk_available else 'simulation'
+        ocr_color = '#4ade80' if self.detector.sdk_available else '#ff6b35'
+        self.ocr_indicator = QLabel(f"OCR: {ocr_status}")
         self.ocr_indicator.setFont(QFont('Microsoft YaHei', 9))
         self.ocr_indicator.setStyleSheet(f"color: {ocr_color}; background-color: transparent;")
         header_layout.addWidget(self.ocr_indicator)
@@ -854,8 +861,17 @@ class MainWindow(QMainWindow):
         else:
             self.sdk_indicator.setStyleSheet("color: #666; background-color: transparent;")
 
+    def _create_overlay_panel(self):
+        if GraphicalOverlay is not None:
+            panel = GraphicalOverlay(opacity=0.85)
+        elif OverlayPanel is not None:
+            panel = OverlayPanel(opacity=0.85)
+        else:
+            return None
+        panel.closed.connect(self._on_overlay_closed)
+        return panel
+
     def toggle_overlay(self):
-        """切换叠加层显示"""
         if not OVERLAY_AVAILABLE:
             self.overlay_toggle_btn.setText("📋 不可用")
             return
@@ -870,35 +886,39 @@ class MainWindow(QMainWindow):
             )
         else:
             if not self.overlay_panel:
-                self.overlay_panel = OverlayPanel(opacity=0.85)
-                self.overlay_panel.closed.connect(self._on_overlay_closed)
-            self.overlay_panel.show_at_game_position()
-            self.overlay_visible = True
-            self.overlay_toggle_btn.setText("📋 隐藏叠加")
-            self.overlay_toggle_btn.setStyleSheet(
-                "background-color: #c0392b; color: white; border: none; "
-                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
-            )
+                self.overlay_panel = self._create_overlay_panel()
+            if self.overlay_panel:
+                self.overlay_panel.show_at_game_position()
+                self.overlay_visible = True
+                self.overlay_toggle_btn.setText("📋 隐藏叠加")
+                self.overlay_toggle_btn.setStyleSheet(
+                    "background-color: #c0392b; color: white; border: none; "
+                    "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+                )
 
     def _show_overlay_tab(self, tab_index):
-        """显示叠加层并切换到指定标签"""
         if not OVERLAY_AVAILABLE:
             return
 
         if not self.overlay_panel:
-            self.overlay_panel = OverlayPanel(opacity=0.85)
-            self.overlay_panel.closed.connect(self._on_overlay_closed)
+            self.overlay_panel = self._create_overlay_panel()
 
-        self.overlay_panel._tab_widget.setCurrentIndex(tab_index)
+        if self.overlay_panel:
+            if isinstance(self.overlay_panel, GraphicalOverlay):
+                panel_names = ['skill', 'paragon', 'equipment']
+                if 0 <= tab_index < len(panel_names):
+                    self.overlay_panel.show_panel(panel_names[tab_index])
+            elif hasattr(self.overlay_panel, '_tab_widget'):
+                self.overlay_panel._tab_widget.setCurrentIndex(tab_index)
 
-        if not self.overlay_visible:
-            self.overlay_panel.show_at_game_position()
-            self.overlay_visible = True
-            self.overlay_toggle_btn.setText("📋 隐藏叠加")
-            self.overlay_toggle_btn.setStyleSheet(
-                "background-color: #c0392b; color: white; border: none; "
-                "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
-            )
+            if not self.overlay_visible:
+                self.overlay_panel.show_at_game_position()
+                self.overlay_visible = True
+                self.overlay_toggle_btn.setText("📋 隐藏叠加")
+                self.overlay_toggle_btn.setStyleSheet(
+                    "background-color: #c0392b; color: white; border: none; "
+                    "border-radius: 3px; padding: 5px 10px; font-size: 12px;"
+                )
 
     def _on_overlay_closed(self):
         """叠加层关闭回调"""
@@ -1040,9 +1060,7 @@ class MainWindow(QMainWindow):
             return
 
         if not self.damage_monitor:
-            ocr_rec = self.detector.ocr_recognizer if hasattr(self.detector, 'ocr_recognizer') else None
             self.damage_monitor = DamageMonitor(
-                ocr_recognizer=ocr_rec,
                 content_indexer=self.detector.indexer,
             )
 

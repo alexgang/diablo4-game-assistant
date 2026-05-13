@@ -15,7 +15,7 @@ class GamingAssistantSDK:
     def __init__(self, base_url: str = "http://127.0.0.1:9190"):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
-        self.session.trust_env = Falseq
+        self.session.trust_env = False
         os.environ.pop("HTTPS_PROXY", None)
         os.environ.pop("HTTP_PROXY", None)
         os.environ.pop("https_proxy", None)
