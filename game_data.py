@@ -216,56 +216,70 @@ class GameDatabase:
         }
 
     def _get_default_items(self):
-        """返回默认装备数据"""
         return {
             "weapons": {
                 "swords": [
-                    {"name": "碎骨者", "type": "双手剑", "damage": "高", "speed": "慢", "rarity": "暗金"},
-                    {"name": "末日使者", "type": "单手剑", "damage": "中高", "speed": "中", "rarity": "暗金"}
+                    {"name": "屠夫的砍刀", "type": "双手剑", "damage": "高", "speed": "慢", "rarity": "暗金", "effect": "对流血敌人暴击率+15%"},
+                    {"name": "末日先驱", "type": "单手剑", "damage": "中高", "speed": "中", "rarity": "暗金", "effect": "暗影伤害+40%"}
                 ],
                 "staffs": [
-                    {"name": "伊苏的符文之杖", "type": "法杖", "damage": "中", "speed": "中", "rarity": "暗金"}
+                    {"name": "埃苏的传家宝", "type": "法杖", "damage": "中", "speed": "中", "rarity": "暗金", "effect": "火焰技能伤害+30%"}
                 ],
                 "bows": [
-                    {"name": "风之力", "type": "弓", "damage": "中高", "speed": "快", "rarity": "暗金"}
+                    {"name": "风之力的回响", "type": "弓", "damage": "中高", "speed": "快", "rarity": "暗金", "effect": "远程伤害+25%"}
                 ],
                 "daggers": [
-                    {"name": "暗影之刃", "type": "匕首", "damage": "低", "speed": "极快", "rarity": "传奇"}
+                    {"name": "暗影之拥", "type": "匕首", "damage": "低", "speed": "极快", "rarity": "暗金", "effect": "暗影灌注伤害+50%"}
+                ],
+                "maces": [
+                    {"name": "碎骨锤", "type": "双手锤", "damage": "极高", "speed": "慢", "rarity": "暗金", "effect": "晕眩持续时间+30%"}
                 ]
             },
             "armor": {
                 "heavy": [
-                    {"name": "塔拉夏的守护", "defense": "极高", "slot": "胸甲", "rarity": "暗金"},
-                    {"name": "不朽之王的铸甲", "defense": "高", "slot": "胸甲", "rarity": "暗金"}
+                    {"name": "先祖之怒", "defense": "极高", "slot": "胸甲", "rarity": "暗金", "effect": "狂暴时伤害+50%"},
+                    {"name": "血涌", "defense": "高", "slot": "胸甲", "rarity": "暗金", "effect": "鲜血技能伤害+40%"}
                 ],
                 "light": [
-                    {"name": "玛娜的优雅", "defense": "中", "slot": "胸甲", "rarity": "传奇"},
-                    {"name": "塔格奥的鳞甲", "defense": "中高", "slot": "胸甲", "rarity": "暗金"}
+                    {"name": "无限之焰", "defense": "中", "slot": "胸甲", "rarity": "暗金", "effect": "火焰技能暴击+20%"},
+                    {"name": "冰霜织造者", "defense": "中高", "slot": "胸甲", "rarity": "暗金", "effect": "冰霜技能消耗-25%"}
                 ],
                 "helmets": [
-                    {"name": "安达利尔的面貌", "defense": "高", "slot": "头盔", "rarity": "暗金"},
-                    {"name": "吉永之脸", "defense": "中", "slot": "头盔", "rarity": "传奇"}
+                    {"name": "哈维拉的教诲", "defense": "高", "slot": "头盔", "rarity": "暗金", "effect": "全技能+2"},
+                    {"name": "风暴之眼", "defense": "中", "slot": "头盔", "rarity": "暗金", "effect": "风暴技能伤害+40%"}
                 ]
             },
             "accessories": {
                 "rings": [
-                    {"name": "约旦之石", "slots": 1, "effects": ["+1所有技能", "法力上限"], "rarity": "暗金"}
+                    {"name": "星火之环", "slots": 1, "effects": ["闪电伤害+20%", "暴击率+8%"], "rarity": "暗金"},
+                    {"name": "夜嚎", "slots": 1, "effects": ["暗影伤害+25%", "移动速度+10%"], "rarity": "暗金"}
                 ],
                 "amulets": [
-                    {"name": "马拉的万花筒", "slots": 1, "effects": ["+2所有技能", "全抗性"], "rarity": "暗金"}
+                    {"name": "哈维拉的誓言", "slots": 1, "effects": ["全技能+3", "全抗性+15%"], "rarity": "暗金"},
+                    {"name": "艾尼弗的奖赏", "slots": 1, "effects": ["资源生成+20%", "技能伤害+15%"], "rarity": "暗金"}
                 ],
                 "gloves": [
-                    {"name": "霜燃", "effects": ["攻击速度", "冰冷伤害"], "rarity": "暗金"}
+                    {"name": "灰烬之握", "effects": ["攻击速度+12%", "火焰伤害+15%"], "rarity": "暗金"},
+                    {"name": "冰霜之触", "effects": ["暴击率+8%", "冰霜伤害+20%"], "rarity": "暗金"}
                 ],
                 "boots": [
-                    {"name": "战旅", "effects": ["移动速度", "属性加成"], "rarity": "暗金"}
+                    {"name": "暗影之步", "effects": ["移动速度+15%", "暗影步+1"], "rarity": "暗金"},
+                    {"name": "风暴行者", "effects": ["移动速度+12%", "闪避+8%"], "rarity": "暗金"}
                 ]
             },
             "unique_items": [
-                {"name": "末日之刃", "slot": "双手武器", "rarity": "暗金", "effect": "暗影伤害提升100%"},
+                {"name": "屠夫的砍刀", "slot": "双手武器", "rarity": "暗金", "effect": "对流血敌人暴击率+15%"},
                 {"name": "哈维拉的誓言", "slot": "护符", "rarity": "暗金", "effect": "所有技能+3"},
                 {"name": "先祖之怒", "slot": "胸甲", "rarity": "暗金", "effect": "狂暴时伤害+50%"},
-                {"name": "风暴之眼", "slot": "头盔", "rarity": "暗金", "effect": "风暴技能伤害+40%"}
+                {"name": "风暴之眼", "slot": "头盔", "rarity": "暗金", "effect": "风暴技能伤害+40%"},
+                {"name": "末日先驱", "slot": "单手武器", "rarity": "暗金", "effect": "暗影伤害+40%"},
+                {"name": "埃苏的传家宝", "slot": "法杖", "rarity": "暗金", "effect": "火焰技能伤害+30%"},
+                {"name": "星火之环", "slot": "戒指", "rarity": "暗金", "effect": "闪电伤害+20%"},
+                {"name": "暗影之拥", "slot": "匕首", "rarity": "暗金", "effect": "暗影灌注伤害+50%"},
+                {"name": "血涌", "slot": "胸甲", "rarity": "暗金", "effect": "鲜血技能伤害+40%"},
+                {"name": "灰烬之握", "slot": "手套", "rarity": "暗金", "effect": "攻击速度+12%"},
+                {"name": "暗影之步", "slot": "靴子", "rarity": "暗金", "effect": "移动速度+15%"},
+                {"name": "冰霜织造者", "slot": "胸甲", "rarity": "暗金", "effect": "冰霜技能消耗-25%"}
             ]
         }
 
