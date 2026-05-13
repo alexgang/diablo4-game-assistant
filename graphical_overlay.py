@@ -170,9 +170,14 @@ class D4SkillTreeWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
 
+        bg_rect = self.rect().adjusted(4, 4, -4, -4)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(10, 6, 12, 180)))
+        painter.drawRoundedRect(bg_rect, 4, 4)
+
         if not self._skills:
             painter.setPen(QColor(102, 102, 102))
-            painter.setFont(QFont('Microsoft YaHei', 10))
+            painter.setFont(QFont('Segoe UI', 10))
             painter.drawText(self.rect(), Qt.AlignCenter, "暂无技能数据")
             painter.end()
             return
@@ -184,10 +189,13 @@ class D4SkillTreeWidget(QWidget):
                 both_active = p1.get('active', False) and p2.get('active', False)
 
                 if both_active:
-                    glow_pen = QPen(QColor(255, 50, 30, 60), 6)
+                    outer_glow = QPen(QColor(255, 30, 10, 25), 12)
+                    painter.setPen(outer_glow)
+                    painter.drawLine(int(p1['x']), int(p1['y']), int(p2['x']), int(p2['y']))
+                    glow_pen = QPen(QColor(255, 50, 30, 60), 8)
                     painter.setPen(glow_pen)
                     painter.drawLine(int(p1['x']), int(p1['y']), int(p2['x']), int(p2['y']))
-                    line_pen = QPen(QColor(255, 80, 50, 200), 2.5)
+                    line_pen = QPen(QColor(255, 80, 50, 200), 3)
                 else:
                     line_pen = QPen(QColor(80, 80, 100, 100), 1.5)
 
@@ -202,7 +210,7 @@ class D4SkillTreeWidget(QWidget):
                 label_x = node['x']
                 label_y = node['y'] - 28
                 painter.setPen(QColor(cat_color))
-                painter.setFont(QFont('Microsoft YaHei', 8, QFont.Bold))
+                painter.setFont(QFont('Segoe UI', 8, QFont.Bold))
                 painter.drawText(QRectF(label_x - 40, label_y - 8, 80, 16),
                                  Qt.AlignCenter, cat_cn)
 
@@ -248,11 +256,11 @@ class D4SkillTreeWidget(QWidget):
 
         if node['points']:
             painter.setPen(QColor(255, 255, 255) if is_active else QColor(120, 120, 120))
-            painter.setFont(QFont('Microsoft YaHei', 8, QFont.Bold))
+            painter.setFont(QFont('Segoe UI', 8, QFont.Bold))
             painter.drawText(rect, Qt.AlignCenter, node['points'])
 
         painter.setPen(QColor(220, 220, 220) if is_active else QColor(100, 100, 100))
-        painter.setFont(QFont('Microsoft YaHei', 7))
+        painter.setFont(QFont('Segoe UI', 7))
         name = node['name']
         if len(name) > 5:
             name = name[:4] + '..'
@@ -287,9 +295,14 @@ class D4ParagonBoardWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
 
+        bg_rect = self.rect().adjusted(4, 4, -4, -4)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(8, 5, 10, 180)))
+        painter.drawRoundedRect(bg_rect, 4, 4)
+
         if not self._boards:
             painter.setPen(QColor(102, 102, 102))
-            painter.setFont(QFont('Microsoft YaHei', 10))
+            painter.setFont(QFont('Segoe UI', 10))
             painter.drawText(self.rect(), Qt.AlignCenter, "暂无巅峰数据")
             painter.end()
             return
@@ -323,7 +336,7 @@ class D4ParagonBoardWidget(QWidget):
             by = y_offset + row_idx * (board_h + 50)
 
             painter.setPen(QColor('#ffd700'))
-            painter.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+            painter.setFont(QFont('Segoe UI', 9, QFont.Bold))
             painter.drawText(int(bx), int(by), board_name)
             by += 18
 
@@ -342,9 +355,24 @@ class D4ParagonBoardWidget(QWidget):
                     is_glyph = (dist == 1 and (r + c) % 4 == 0)
 
                     if is_center:
+                        center_glow = QRadialGradient(hx, hy, hex_size + 16)
+                        center_glow.setColorAt(0, QColor(self._class_color + '60'))
+                        center_glow.setColorAt(0.5, QColor(self._class_color + '20'))
+                        center_glow.setColorAt(1, QColor(0, 0, 0, 0))
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QBrush(center_glow))
+                        painter.drawEllipse(QRectF(hx - hex_size - 16, hy - hex_size - 16,
+                                                   (hex_size + 16) * 2, (hex_size + 16) * 2))
                         self._draw_hex(painter, hx, hy, hex_size + 4,
                                        QColor(self._class_color), QColor('#ff6b35'), 2)
                     elif is_legendary:
+                        outer_glow = QRadialGradient(hx, hy, hex_size + 12)
+                        outer_glow.setColorAt(0, QColor(255, 215, 0, 40))
+                        outer_glow.setColorAt(1, QColor(0, 0, 0, 0))
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QBrush(outer_glow))
+                        painter.drawEllipse(QRectF(hx - hex_size - 12, hy - hex_size - 12,
+                                                   (hex_size + 12) * 2, (hex_size + 12) * 2))
                         glow = QRadialGradient(hx, hy, hex_size + 6)
                         glow.setColorAt(0, QColor(255, 215, 0, 80))
                         glow.setColorAt(1, QColor(0, 0, 0, 0))
@@ -355,15 +383,22 @@ class D4ParagonBoardWidget(QWidget):
                         self._draw_hex(painter, hx, hy, hex_size + 2,
                                        QColor(255, 215, 0), QColor('#ffd700'), 2)
                         painter.setPen(QColor('#ffd700'))
-                        painter.setFont(QFont('Microsoft YaHei', 6, QFont.Bold))
+                        painter.setFont(QFont('Segoe UI', 6, QFont.Bold))
                         painter.drawText(QRectF(hx - 12, hy - 4, 24, 8), Qt.AlignCenter, "传奇")
                     elif is_glyph:
-                        painter.setPen(QPen(QColor(100, 200, 255), 1.5))
+                        glyph_glow = QRadialGradient(hx, hy, hex_size + 4)
+                        glyph_glow.setColorAt(0, QColor(100, 200, 255, 50))
+                        glyph_glow.setColorAt(1, QColor(0, 0, 0, 0))
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QBrush(glyph_glow))
+                        painter.drawEllipse(QRectF(hx - hex_size - 4, hy - hex_size - 4,
+                                                   (hex_size + 4) * 2, (hex_size + 4) * 2))
+                        painter.setPen(QPen(QColor(100, 200, 255), 2))
                         painter.setBrush(QBrush(QColor(20, 40, 60)))
                         painter.drawEllipse(QRectF(hx - hex_size + 2, hy - hex_size + 2,
                                                    (hex_size - 2) * 2, (hex_size - 2) * 2))
                         painter.setPen(QColor(100, 200, 255))
-                        painter.setFont(QFont('Microsoft YaHei', 5))
+                        painter.setFont(QFont('Segoe UI', 5))
                         painter.drawText(QRectF(hx - 8, hy - 3, 16, 6), Qt.AlignCenter, "雕纹")
                     elif is_rare:
                         self._draw_hex(painter, hx, hy, hex_size,
@@ -374,7 +409,7 @@ class D4ParagonBoardWidget(QWidget):
 
             if rare_node:
                 painter.setPen(QColor('#4488cc'))
-                painter.setFont(QFont('Microsoft YaHei', 7))
+                painter.setFont(QFont('Segoe UI', 7))
                 painter.drawText(int(bx), int(by + board_h + 4), f"★ {rare_node}")
 
             if col_in_row == boards_per_row - 1 or board_idx == total_boards - 1:
@@ -443,7 +478,7 @@ class D4EquipmentPanel(QWidget):
 
         ty = y + 8
         painter.setPen(QColor('#ff6b35'))
-        painter.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        painter.setFont(QFont('Segoe UI', 9, QFont.Bold))
         painter.drawText(x + 6, ty + 10, "属性面板")
         ty += 18
 
@@ -470,11 +505,11 @@ class D4EquipmentPanel(QWidget):
                 ty += 6
                 continue
             painter.setPen(QColor(150, 150, 160))
-            painter.setFont(QFont('Microsoft YaHei', 7))
+            painter.setFont(QFont('Segoe UI', 7))
             painter.drawText(x + 8, ty + 9, label)
 
             painter.setPen(QColor(color))
-            painter.setFont(QFont('Microsoft YaHei', 7, QFont.Bold))
+            painter.setFont(QFont('Segoe UI', 7, QFont.Bold))
             painter.drawText(x + w - 8 - painter.fontMetrics().width(value), ty + 9, value)
             ty += 16
 
@@ -507,11 +542,11 @@ class D4EquipmentPanel(QWidget):
 
         if self._class_name:
             painter.setPen(QColor(CLASS_COLORS.get(self._class_name, '#ff6b35')))
-            painter.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+            painter.setFont(QFont('Segoe UI', 9, QFont.Bold))
             painter.drawText(x, ty + 10, self._class_name)
         if self._build_title:
             painter.setPen(QColor(150, 150, 160))
-            painter.setFont(QFont('Microsoft YaHei', 7))
+            painter.setFont(QFont('Segoe UI', 7))
             painter.drawText(x, ty + 22, self._build_title)
         ty += 30
 
@@ -532,7 +567,7 @@ class D4EquipmentPanel(QWidget):
 
         skill_bar_y = ty + 10
         painter.setPen(QColor(100, 80, 120, 80))
-        painter.setFont(QFont('Microsoft YaHei', 7))
+        painter.setFont(QFont('Segoe UI', 7))
         painter.drawText(x, skill_bar_y, "技能栏")
 
         skill_bar_y += 14
@@ -548,7 +583,7 @@ class D4EquipmentPanel(QWidget):
             painter.setBrush(QBrush(QColor(20, 20, 35, 180)))
             painter.drawRoundedRect(QRectF(sx, skill_bar_y, skill_w, skill_h), 3, 3)
             painter.setPen(QColor(80, 80, 100))
-            painter.setFont(QFont('Microsoft YaHei', 6))
+            painter.setFont(QFont('Segoe UI', 6))
             painter.drawText(QRectF(sx, skill_bar_y, skill_w, skill_h),
                              Qt.AlignCenter, str(i + 1))
 
@@ -559,6 +594,13 @@ class D4EquipmentPanel(QWidget):
 
         if name:
             if rarity in ('神话暗金',):
+                mythic_glow = QRadialGradient(x + w / 2, y + h / 2, max(w, h))
+                mythic_glow.setColorAt(0, QColor(255, 50, 30, 60))
+                mythic_glow.setColorAt(0.5, QColor(255, 50, 30, 25))
+                mythic_glow.setColorAt(1, QColor(0, 0, 0, 0))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(mythic_glow))
+                painter.drawRoundedRect(QRectF(x - 6, y - 6, w + 12, h + 12), 8, 8)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(QColor(255, 50, 30, 30)))
                 painter.drawRoundedRect(QRectF(x - 2, y - 2, w + 4, h + 4), 5, 5)
@@ -570,7 +612,15 @@ class D4EquipmentPanel(QWidget):
                 painter.setPen(QPen(QColor(rarity_color), 2.5))
                 painter.setBrush(QBrush(QColor(30, 20, 10, 200)))
                 painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
+                inner_glow = QLinearGradient(x, y, x, y + h)
+                inner_glow.setColorAt(0, QColor(255, 128, 0, 30))
+                inner_glow.setColorAt(0.5, QColor(255, 128, 0, 10))
+                inner_glow.setColorAt(1, QColor(255, 128, 0, 25))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(inner_glow))
+                painter.drawRoundedRect(QRectF(x + 2, y + 2, w - 4, h - 4), 3, 3)
                 painter.setPen(QPen(QColor(rarity_color + '80'), 1))
+                painter.setBrush(Qt.NoBrush)
                 painter.drawRoundedRect(QRectF(x + 2, y + 2, w - 4, h - 4), 3, 3)
             elif rarity == '传奇':
                 painter.setPen(QPen(QColor(rarity_color), 2))
@@ -583,25 +633,32 @@ class D4EquipmentPanel(QWidget):
 
             icon = SLOT_DISPLAY.get(slot_name, '')
             painter.setPen(QColor(rarity_color))
-            painter.setFont(QFont('Microsoft YaHei', 14))
+            painter.setFont(QFont('Segoe UI', 14))
             painter.drawText(QRectF(x, y + 2, w, h - 16), Qt.AlignCenter, icon)
 
             display_name = name if len(name) <= 4 else name[:3] + '..'
             painter.setPen(QColor(rarity_color))
-            painter.setFont(QFont('Microsoft YaHei', 6, QFont.Bold))
+            painter.setFont(QFont('Segoe UI', 6, QFont.Bold))
             painter.drawText(QRectF(x, y + h - 16, w, 14), Qt.AlignCenter, display_name)
         else:
-            painter.setPen(QPen(QColor(60, 60, 80, 120), 1, Qt.DashLine))
-            painter.setBrush(QBrush(QColor(15, 15, 25, 150)))
+            painter.setPen(QPen(QColor(50, 40, 55, 150), 1, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(12, 10, 18, 180)))
             painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
+            inner_pattern = QLinearGradient(x, y, x + w, y + h)
+            inner_pattern.setColorAt(0, QColor(30, 25, 35, 40))
+            inner_pattern.setColorAt(0.5, QColor(20, 15, 25, 20))
+            inner_pattern.setColorAt(1, QColor(30, 25, 35, 40))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(inner_pattern))
+            painter.drawRoundedRect(QRectF(x + 2, y + 2, w - 4, h - 4), 3, 3)
 
             icon = SLOT_DISPLAY.get(slot_name, '')
             painter.setPen(QColor(60, 60, 80))
-            painter.setFont(QFont('Microsoft YaHei', 10))
+            painter.setFont(QFont('Segoe UI', 10))
             painter.drawText(QRectF(x, y + 4, w, h - 18), Qt.AlignCenter, icon)
 
             painter.setPen(QColor(60, 60, 80))
-            painter.setFont(QFont('Microsoft YaHei', 6))
+            painter.setFont(QFont('Segoe UI', 6))
             painter.drawText(QRectF(x, y + h - 16, w, 14), Qt.AlignCenter, slot_name)
 
     def _draw_corner_ornaments(self, painter, x, y, w, h, color):
@@ -616,6 +673,44 @@ class D4EquipmentPanel(QWidget):
         painter.drawLine(int(x), int(y + h), int(x), int(y + h - s))
         painter.drawLine(int(x + w), int(y + h), int(x + w - s), int(y + h))
         painter.drawLine(int(x + w), int(y + h), int(x + w), int(y + h - s))
+
+
+class D4ContainerWidget(QWidget):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("d4OverlayContainer")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        s = 14
+        t = 2
+
+        gold = QColor(180, 130, 50, 200)
+        dark_red = QColor(120, 40, 20, 160)
+
+        for corner_data in [
+            (0, 0, 1, 1), (w, 0, -1, 1), (0, h, 1, -1), (w, h, -1, -1),
+        ]:
+            cx, cy, dx, dy = corner_data
+
+            painter.setPen(QPen(gold, t + 1))
+            painter.drawLine(int(cx), int(cy), int(cx + dx * s), int(cy))
+            painter.drawLine(int(cx), int(cy), int(cx), int(cy + dy * s))
+
+            painter.setPen(QPen(dark_red, t))
+            inner_s = s - 4
+            ix = cx + dx * 3
+            iy = cy + dy * 3
+            painter.drawLine(int(ix), int(iy), int(ix + dx * inner_s), int(iy))
+            painter.drawLine(int(ix), int(iy), int(ix), int(iy + dy * inner_s))
+
+        painter.end()
 
 
 class GraphicalOverlay(QWidget):
@@ -648,13 +743,14 @@ class GraphicalOverlay(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self._container = QWidget()
-        self._container.setObjectName("d4OverlayContainer")
+        self._container = D4ContainerWidget()
         self._container.setStyleSheet(
             "#d4OverlayContainer {"
-            "  background: rgba(8, 8, 20, 210);"
-            "  border: 1px solid rgba(139, 0, 0, 160);"
-            "  border-radius: 6px;"
+            "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "    stop:0 rgba(20, 12, 8, 220), stop:0.5 rgba(12, 8, 15, 230), "
+            "    stop:1 rgba(20, 12, 8, 220));"
+            "  border: 2px solid rgba(120, 40, 20, 180);"
+            "  border-radius: 4px;"
             "}"
         )
         container_layout = QVBoxLayout(self._container)
@@ -670,7 +766,9 @@ class GraphicalOverlay(QWidget):
 
     def _build_control_bar(self, parent_layout):
         bar = QWidget()
-        bar.setStyleSheet("background: rgba(15, 8, 25, 230); border-radius: 3px;")
+        bar.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                         "stop:0 rgba(25, 12, 8, 240), stop:1 rgba(15, 8, 12, 240)); "
+                         "border-radius: 3px;")
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(8, 4, 8, 4)
         bar_layout.setSpacing(4)
@@ -686,7 +784,7 @@ class GraphicalOverlay(QWidget):
         for key, label in [('skill', '技能'), ('paragon', '巅峰'), ('equipment', '装备')]:
             btn = QPushButton(label)
             btn.setFixedSize(48, 24)
-            btn.setFont(QFont('Microsoft YaHei', 9))
+            btn.setFont(QFont('Segoe UI', 9))
             btn.setStyleSheet(self._panel_btn_style(key == self._current_panel))
             btn.clicked.connect(lambda checked, k=key: self.show_panel(k))
             bar_layout.addWidget(btn)
@@ -723,17 +821,24 @@ class GraphicalOverlay(QWidget):
 
         parent_layout.addWidget(bar)
 
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(120, 40, 20, 100);")
+        parent_layout.addWidget(sep)
+
     def _panel_btn_style(self, active):
         if active:
             return (
-                "QPushButton { color: #fff; background: rgba(139, 0, 0, 180); "
-                "border: 1px solid #8b0000; border-radius: 3px; font-weight: bold; }"
-                "QPushButton:hover { background: rgba(180, 0, 0, 200); }"
+                "QPushButton { color: #ffd700; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                "stop:0 rgba(120, 30, 10, 200), stop:1 rgba(80, 20, 8, 220)); "
+                "border: 1px solid rgba(200, 80, 20, 180); border-radius: 3px; font-weight: bold; }"
+                "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                "stop:0 rgba(150, 40, 15, 220), stop:1 rgba(100, 25, 10, 240)); }"
             )
         return (
-            "QPushButton { color: #999; background: rgba(25, 25, 50, 150); "
-            "border: 1px solid #333; border-radius: 3px; }"
-            "QPushButton:hover { color: #ff6b35; background: rgba(40, 40, 70, 180); }"
+            "QPushButton { color: #999; background: rgba(20, 15, 18, 180); "
+            "border: 1px solid rgba(80, 50, 40, 100); border-radius: 3px; }"
+            "QPushButton:hover { color: #ffd700; background: rgba(35, 25, 20, 200); }"
         )
 
     def _build_stacked_panels(self, parent_layout):
@@ -759,11 +864,11 @@ class GraphicalOverlay(QWidget):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(4, 2, 4, 2)
         self._skill_class_label = QLabel("职业: --")
-        self._skill_class_label.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        self._skill_class_label.setFont(QFont('Segoe UI', 9, QFont.Bold))
         self._skill_class_label.setStyleSheet("color: #9b59b6; background: transparent;")
         header_layout.addWidget(self._skill_class_label)
         self._skill_points_label = QLabel("可用技能点: 0")
-        self._skill_points_label.setFont(QFont('Microsoft YaHei', 8))
+        self._skill_points_label.setFont(QFont('Segoe UI', 8))
         self._skill_points_label.setStyleSheet("color: #ffd700; background: transparent;")
         header_layout.addWidget(self._skill_points_label)
         header_layout.addStretch()
@@ -795,7 +900,7 @@ class GraphicalOverlay(QWidget):
         layout.setSpacing(2)
 
         self._paragon_class_label = QLabel("职业: --")
-        self._paragon_class_label.setFont(QFont('Microsoft YaHei', 9, QFont.Bold))
+        self._paragon_class_label.setFont(QFont('Segoe UI', 9, QFont.Bold))
         self._paragon_class_label.setStyleSheet("color: #9b59b6; background: transparent;")
         layout.addWidget(self._paragon_class_label)
 
