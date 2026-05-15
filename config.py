@@ -18,7 +18,7 @@ CONFIDENCE_THRESHOLD = 0.8
 SCAN_INTERVAL = 2.0
 
 OCR_CONFIG = {
-    'engine': 'auto',
+    'engine': 'openvino_cpp',
     'lang': 'ch',
     'preprocess': 'auto',
     'cache_ttl': 2.0,
@@ -37,7 +37,7 @@ D4_REGIONS = {
 
 VOICE_CONFIG = {
     'stt_engine': 'google',
-    'tts_engine': 'auto',
+    'tts_engine': 'melotts',
     'language': 'zh-CN',
     'tts_voice': 'zh-CN-XiaoxiaoNeural',
     'tts_rate': 180,

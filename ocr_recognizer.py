@@ -12,16 +12,24 @@ OCR文字识别模块 - 从游戏画面中提取文字
 
 import os
 import re
+import json
 import logging
+import subprocess
+import tempfile
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+_CPP_OCR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'PaddleOCR_OpenVINO_CPP-main')
+_CPP_OCR_EXE = os.path.join(_CPP_OCR_DIR, 'build', 'Release', 'reader.exe')
+_CPP_OCR_MODELS = os.path.join(_CPP_OCR_DIR, 'models')
+_CPP_OCR_LABEL = os.path.join(_CPP_OCR_DIR, 'data', 'ppocr_keys_v1.txt')
 
 
 class GameOCR:
     """游戏画面OCR识别 - 多引擎支持"""
 
-    ENGINES = ['paddleocr', 'easyocr', 'tesseract']
+    ENGINES = ['openvino_cpp', 'paddleocr', 'easyocr', 'tesseract']
 
     def __init__(self, engine=None, lang='ch'):
         self.lang = lang
@@ -36,7 +44,9 @@ class GameOCR:
             if eng is None:
                 continue
             try:
-                if eng == 'paddleocr':
+                if eng == 'openvino_cpp':
+                    self._init_openvino_cpp()
+                elif eng == 'paddleocr':
                     self._init_paddleocr()
                 elif eng == 'easyocr':
                     self._init_easyocr()
@@ -53,6 +63,22 @@ class GameOCR:
                 continue
 
         logger.warning("所有OCR引擎均不可用，将使用模拟模式")
+
+    def _init_openvino_cpp(self):
+        if not os.path.isfile(_CPP_OCR_EXE):
+            raise Exception(f"reader.exe not found: {_CPP_OCR_EXE}")
+        det_model = os.path.join(_CPP_OCR_MODELS, 'ch_PP-OCRv4_det_infer', 'inference.pdmodel')
+        cls_model = os.path.join(_CPP_OCR_MODELS, 'ch_ppocr_mobile_v2.0_cls_infer', 'inference.pdmodel')
+        rec_model = os.path.join(_CPP_OCR_MODELS, 'ch_PP-OCRv4_rec_infer', 'inference.pdmodel')
+        if not all(os.path.isfile(f) for f in [det_model, cls_model, rec_model]):
+            raise Exception("PaddleOCR model files not found in: " + _CPP_OCR_MODELS)
+        self.engine = {
+            'exe': _CPP_OCR_EXE,
+            'det_model': det_model,
+            'cls_model': cls_model,
+            'rec_model': rec_model,
+            'label': _CPP_OCR_LABEL,
+        }
 
     def _init_paddleocr(self):
         from paddleocr import PaddleOCR
@@ -145,12 +171,12 @@ class GameOCR:
             clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
             enhanced = clahe.apply(gray)
             _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            denoised = cv2.medianBlur(binary, 2)
+            denoised = cv2.medianBlur(binary, 3)
             return denoised
 
         elif mode == 'light':
             _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            denoised = cv2.medianBlur(binary, 2)
+            denoised = cv2.medianBlur(binary, 3)
             return denoised
 
         elif mode == 'high_contrast':
@@ -162,7 +188,7 @@ class GameOCR:
                 cv2.THRESH_BINARY,
                 11, 2
             )
-            denoised = cv2.medianBlur(thresh, 2)
+            denoised = cv2.medianBlur(thresh, 3)
             return denoised
 
         return gray
@@ -189,9 +215,14 @@ class GameOCR:
             x, y, w, h = max(0, x), max(0, y), max(1, w), max(1, h)
             img = img[y:y + h, x:x + w]
 
-        processed = self.preprocess_image(img, mode=preprocess)
+        if self.engine_name == 'openvino_cpp':
+            processed = img
+        else:
+            processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'paddleocr':
+        if self.engine_name == 'openvino_cpp':
+            return self._ocr_openvino_cpp(processed)
+        elif self.engine_name == 'paddleocr':
             return self._ocr_paddleocr(processed)
         elif self.engine_name == 'easyocr':
             return self._ocr_easyocr(processed)
@@ -216,9 +247,14 @@ class GameOCR:
             x, y, w, h = region
             img = img[y:y + h, x:x + w]
 
-        processed = self.preprocess_image(img, mode=preprocess)
+        if self.engine_name == 'openvino_cpp':
+            processed = img
+        else:
+            processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'paddleocr':
+        if self.engine_name == 'openvino_cpp':
+            return self._ocr_openvino_cpp_detail(processed)
+        elif self.engine_name == 'paddleocr':
             return self._ocr_paddleocr_detail(processed)
         elif self.engine_name == 'easyocr':
             return self._ocr_easyocr_detail(processed)
@@ -226,6 +262,108 @@ class GameOCR:
             return self._ocr_tesseract_detail(processed)
 
         return []
+
+    def _ocr_openvino_cpp(self, img):
+        try:
+            result = self._run_reader_exe(img)
+            if not result:
+                return ''
+            texts = [item['text'] for item in result if item.get('text')]
+            return ' '.join(texts)
+        except Exception as e:
+            logger.error(f"OpenVINO C++ OCR识别失败: {e}")
+            return ''
+
+    def _ocr_openvino_cpp_detail(self, img):
+        try:
+            result = self._run_reader_exe(img)
+            if not result:
+                return []
+            details = []
+            for item in result:
+                details.append({
+                    'text': item.get('text', ''),
+                    'confidence': item.get('score', 0.0),
+                    'bbox': item.get('bbox', []),
+                })
+            return details
+        except Exception as e:
+            logger.error(f"OpenVINO C++ OCR识别失败: {e}")
+            return []
+
+    def _run_reader_exe(self, img):
+        import cv2
+        tmp_path = os.path.join(tempfile.gettempdir(), f'_game_ocr_{os.getpid()}.png')
+        try:
+            cv2.imwrite(tmp_path, img)
+            cfg = self.engine
+            env = os.environ.copy()
+            ov_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\bin\intel64\Release'
+            tbb_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\3rdparty\tbb\bin'
+            cv_bin = r'C:\opencv\build\x64\vc16\bin'
+            env['PATH'] = f'{ov_bin};{tbb_bin};{cv_bin};{env.get("PATH", "")}'
+            cmd = [
+                cfg['exe'],
+                '--type=ocr',
+                f'--input={tmp_path}',
+                f'--det_model_dir={cfg["det_model"]}',
+                f'--cls_model_dir={cfg["cls_model"]}',
+                f'--rec_model_dir={cfg["rec_model"]}',
+                f'--label_dir={cfg["label"]}',
+            ]
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30,
+                env=env, cwd=_CPP_OCR_DIR,
+            )
+            return self._parse_reader_output(proc.stdout)
+        except subprocess.TimeoutExpired:
+            logger.error("reader.exe timeout (30s)")
+            return []
+        except Exception as e:
+            logger.error(f"reader.exe执行失败: {e}")
+            return []
+        finally:
+            if os.path.isfile(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _parse_reader_output(stdout):
+        results = []
+        for line in stdout.strip().split('\n'):
+            line = line.strip()
+            if not line or line.startswith('=') or line.startswith('Preprocessor'):
+                continue
+            if 'det boxes:' not in line or 'rec text:' not in line:
+                continue
+            parts = {}
+            det_idx = line.find('det boxes:')
+            rec_idx = line.find('rec text:')
+            score_idx = line.find('rec score:')
+            cls_idx = line.find('cls label:')
+            cls_score_idx = line.find('cls score:')
+            if det_idx >= 0 and rec_idx >= 0:
+                box_end = rec_idx
+                box_str = line[det_idx + len('det boxes:'):box_end].strip()
+                try:
+                    import ast
+                    parts['bbox'] = ast.literal_eval(box_str)
+                except Exception:
+                    parts['bbox'] = []
+            if rec_idx >= 0:
+                text_end = score_idx if score_idx >= 0 else cls_idx if cls_idx >= 0 else len(line)
+                parts['text'] = line[rec_idx + len('rec text:'):text_end].strip()
+            if score_idx >= 0:
+                score_end = cls_idx if cls_idx >= 0 else len(line)
+                try:
+                    parts['score'] = float(line[score_idx + len('rec score:'):score_end].strip())
+                except ValueError:
+                    parts['score'] = 0.0
+            if parts.get('text'):
+                results.append(parts)
+        return results
 
     def _ocr_paddleocr(self, img):
         try:

@@ -13,6 +13,9 @@ import re
 import time
 import logging
 import threading
+import subprocess
+import tempfile
+import os
 from collections import OrderedDict
 
 from sdk_client import GamingAssistantSDK
@@ -24,6 +27,13 @@ SPEECH_REC_AVAILABLE = False
 WHISPER_AVAILABLE = False
 PYTTSX3_AVAILABLE = False
 EDGE_TTS_AVAILABLE = False
+MELOTTS_AVAILABLE = False
+
+_CPP_TTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'MeloTTS.cpp-multilang-develop')
+_CPP_TTS_EXE = os.path.join(_CPP_TTS_DIR, 'build', 'Release', 'meloTTS_ov.exe')
+_CPP_TTS_MODELS = os.path.join(_CPP_TTS_DIR, 'ov_models')
+if os.path.isfile(_CPP_TTS_EXE):
+    MELOTTS_AVAILABLE = True
 
 try:
     import speech_recognition as sr
@@ -465,7 +475,7 @@ class VoiceInput:
 class VoiceOutput:
     """语音输出（TTS）"""
 
-    ENGINES = ['edge_tts', 'pyttsx3']
+    ENGINES = ['melotts', 'edge_tts', 'pyttsx3']
 
     def __init__(self, engine='auto', voice=None, rate=180):
         self.engine_name = None
@@ -491,7 +501,12 @@ class VoiceOutput:
             if eng is None:
                 continue
             try:
-                if eng == 'edge_tts' and EDGE_TTS_AVAILABLE:
+                if eng == 'melotts' and MELOTTS_AVAILABLE:
+                    self.engine_name = 'melotts'
+                    self.available = True
+                    logger.info("语音输出引擎: MeloTTS (OpenVINO C++)")
+                    return
+                elif eng == 'edge_tts' and EDGE_TTS_AVAILABLE:
                     self.engine_name = 'edge_tts'
                     self.available = True
                     logger.info("语音输出引擎: Edge TTS")
@@ -536,7 +551,9 @@ class VoiceOutput:
         with self._lock:
             self._speaking = True
         try:
-            if self.engine_name == 'edge_tts':
+            if self.engine_name == 'melotts':
+                self._speak_melotts(text)
+            elif self.engine_name == 'edge_tts':
                 self._speak_edge_tts(text)
             elif self.engine_name == 'pyttsx3':
                 self._speak_pyttsx3(text)
@@ -545,6 +562,59 @@ class VoiceOutput:
         finally:
             with self._lock:
                 self._speaking = False
+
+    def _speak_melotts(self, text):
+        """使用MeloTTS C++引擎播报"""
+        tmp_wav_base = os.path.join(tempfile.gettempdir(), f'_game_tts_{os.getpid()}_{int(time.time())}')
+        try:
+            env = os.environ.copy()
+            ov_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\bin\intel64\Release'
+            tbb_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\3rdparty\tbb\bin'
+            cv_bin = r'C:\opencv\build\x64\vc16\bin'
+            env['PATH'] = f'{ov_bin};{tbb_bin};{cv_bin};{env.get("PATH", "")}'
+
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in text)
+            lang = 'ZH' if has_chinese else 'EN'
+            model_dir = _CPP_TTS_MODELS
+
+            tmp_txt = os.path.join(tempfile.gettempdir(), f'_game_tts_input_{os.getpid()}.txt')
+            with open(tmp_txt, 'w', encoding='utf-8') as f:
+                f.write(text)
+
+            cmd = [
+                _CPP_TTS_EXE,
+                '--model_dir', model_dir,
+                '--language', lang,
+                '--input_file', tmp_txt,
+                '--output_filename', tmp_wav_base,
+            ]
+            subprocess.run(cmd, capture_output=True, timeout=15, env=env, cwd=_CPP_TTS_DIR, check=True)
+
+            expected_wav = f'{tmp_wav_base}_{lang}-MIX-EN.wav' if lang == 'ZH' else f'{tmp_wav_base}_{lang}-Default.wav'
+            if not os.path.isfile(expected_wav):
+                import glob
+                wav_files = glob.glob(f'{tmp_wav_base}_*.wav')
+                if wav_files:
+                    expected_wav = wav_files[0]
+            if os.path.isfile(expected_wav):
+                self._play_audio_file(expected_wav)
+        except subprocess.TimeoutExpired:
+            logger.error("meloTTS_ov.exe timeout (15s)")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"meloTTS_ov.exe failed: rc={e.returncode}")
+        except Exception as e:
+            logger.error(f"MeloTTS播报失败: {e}")
+        finally:
+            for pattern in [tmp_wav_base + '_*.wav', tmp_txt]:
+                try:
+                    if pattern.endswith('.wav'):
+                        import glob
+                        for f in glob.glob(pattern):
+                            os.unlink(f)
+                    elif os.path.isfile(pattern):
+                        os.unlink(pattern)
+                except Exception:
+                    pass
 
     def _speak_edge_tts(self, text):
         """使用Edge TTS播报"""
