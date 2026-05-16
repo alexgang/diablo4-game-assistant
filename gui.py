@@ -26,17 +26,28 @@ from game_detector import GameDetector
 logger = logging.getLogger(__name__)
 
 try:
-    from graphical_overlay import GraphicalOverlay
-    OVERLAY_AVAILABLE = True
+    from web_overlay import WebOverlay, WEB_AVAILABLE as _WEB_OK
 except ImportError:
+    WebOverlay = None
+    _WEB_OK = False
+
+if _WEB_OK and WebOverlay is not None:
+    GraphicalOverlay = None
+    OverlayPanel = None
+    OVERLAY_AVAILABLE = True
+else:
     try:
-        from overlay import OverlayPanel
-        GraphicalOverlay = None
+        from graphical_overlay import GraphicalOverlay
         OVERLAY_AVAILABLE = True
     except ImportError:
-        GraphicalOverlay = None
-        OverlayPanel = None
-        OVERLAY_AVAILABLE = False
+        try:
+            from overlay import OverlayPanel
+            GraphicalOverlay = None
+            OVERLAY_AVAILABLE = True
+        except ImportError:
+            GraphicalOverlay = None
+            OverlayPanel = None
+            OVERLAY_AVAILABLE = False
 
 try:
     from voice_assistant import VoiceAssistant
@@ -862,7 +873,9 @@ class MainWindow(QMainWindow):
             self.sdk_indicator.setStyleSheet("color: #666; background-color: transparent;")
 
     def _create_overlay_panel(self):
-        if GraphicalOverlay is not None:
+        if WebOverlay is not None:
+            panel = WebOverlay(opacity=0.85)
+        elif GraphicalOverlay is not None:
             panel = GraphicalOverlay(opacity=0.85)
             try:
                 from screen_capture import ScreenCapture
@@ -909,7 +922,9 @@ class MainWindow(QMainWindow):
             self.overlay_panel = self._create_overlay_panel()
 
         if self.overlay_panel:
-            if isinstance(self.overlay_panel, GraphicalOverlay):
+            if isinstance(self.overlay_panel, WebOverlay):
+                pass
+            elif isinstance(self.overlay_panel, GraphicalOverlay):
                 panel_names = ['skill', 'paragon', 'equipment']
                 if 0 <= tab_index < len(panel_names):
                     self.overlay_panel.show_panel(panel_names[tab_index])
@@ -939,6 +954,9 @@ class MainWindow(QMainWindow):
         if not self.overlay_panel or not self.overlay_visible:
             return
 
+        if isinstance(self.overlay_panel, WebOverlay):
+            return
+
         recommendations = analysis.get('recommendations', {})
         class_name = analysis.get('class_name')
 
@@ -964,6 +982,8 @@ class MainWindow(QMainWindow):
     def _update_overlay_from_search(self, results, class_name=None):
         """从搜索结果更新叠加层"""
         if not self.overlay_panel:
+            return
+        if isinstance(self.overlay_panel, WebOverlay):
             return
         self.overlay_panel.update_from_search_results(results, class_name)
 
@@ -1131,6 +1151,9 @@ class MainWindow(QMainWindow):
     def _update_overlay_damage(self, report):
         """更新叠加层伤害数据"""
         if not self.overlay_panel:
+            return
+
+        if isinstance(self.overlay_panel, WebOverlay):
             return
 
         summary = report.get('summary', {})

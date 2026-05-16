@@ -348,6 +348,8 @@ def _draw_character_silhouette(painter, cx, cy, height, color='#554433'):
 
 class D4SkillTreeWidget(QWidget):
 
+    _TIER_ORDER = ['基础技能', '核心技能', '特性技能', '终极技能']
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._skills = {}
@@ -361,10 +363,76 @@ class D4SkillTreeWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_skills(self, skills, class_name=''):
-        self._skills = skills if isinstance(skills, dict) else {}
+        if isinstance(skills, dict):
+            self._skills = skills
+        elif isinstance(skills, list):
+            self._skills = {'技能': skills}
+        else:
+            self._skills = {}
         self._class_name = class_name
         self._node_positions = []
         self.update()
+
+    def _map_to_tiers(self):
+        if not self._skills:
+            return []
+        categories = list(self._skills.keys())
+        tier_keywords = [
+            ['基础', 'basic'],
+            ['核心', 'core'],
+            ['防御', '机动', '特性', 'defensive', 'mobility', 'key'],
+            ['终极', 'ultimate'],
+        ]
+        mapped = {}
+        unmapped = []
+        for cat in categories:
+            cat_l = cat.lower()
+            matched = False
+            for tier_idx, keywords in enumerate(tier_keywords):
+                if any(kw in cat_l for kw in keywords):
+                    mapped[tier_idx] = cat
+                    matched = True
+                    break
+            if not matched:
+                unmapped.append(cat)
+        result = []
+        for i in range(4):
+            if i in mapped:
+                result.append((self._TIER_ORDER[i], self._skills.get(mapped[i], [])))
+        for cat in unmapped:
+            tier_idx = min(len(result), len(self._TIER_ORDER) - 1)
+            tier_name = self._TIER_ORDER[tier_idx] if len(result) < len(self._TIER_ORDER) else cat
+            result.append((tier_name, self._skills.get(cat, [])))
+        if not result:
+            for cat in categories:
+                result.append((cat, self._skills.get(cat, [])))
+        return result
+
+    @staticmethod
+    def _parse_skill(skill):
+        import re
+        name = ''
+        points = 0
+        max_points = 5
+        is_active = False
+        if isinstance(skill, str):
+            m = re.match(r'(.+?)\s+(\d+)/(\d+)$', skill.strip())
+            if m:
+                name, points, max_points = m.group(1), int(m.group(2)), int(m.group(3))
+            else:
+                m = re.match(r'(.+?)\s+(\d+)$', skill.strip())
+                if m:
+                    name, points = m.group(1), int(m.group(2))
+                    max_points = max(points, 5)
+                else:
+                    name = skill
+            is_active = points > 0
+        elif isinstance(skill, dict):
+            name = skill.get('name', '')
+            points = int(skill.get('points', 0))
+            max_points = int(skill.get('max_points', skill.get('max', max(points, 5))))
+            is_active = skill.get('active', points > 0)
+        return name, points, max_points, is_active
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -373,161 +441,257 @@ class D4SkillTreeWidget(QWidget):
         h = self.height()
 
         bg = QLinearGradient(0, 0, 0, h)
-        bg.setColorAt(0, QColor(25, 18, 35, 240))
-        bg.setColorAt(0.5, QColor(18, 12, 28, 250))
-        bg.setColorAt(1, QColor(25, 18, 35, 240))
+        bg.setColorAt(0, QColor(22, 16, 12, 240))
+        bg.setColorAt(0.3, QColor(18, 12, 10, 245))
+        bg.setColorAt(0.7, QColor(15, 10, 8, 250))
+        bg.setColorAt(1, QColor(22, 16, 12, 240))
         painter.fillRect(self.rect(), bg)
+
+        rng = random.Random(42)
+        painter.setPen(Qt.NoPen)
+        for _ in range(80):
+            tx = rng.randint(0, max(w, 1))
+            ty = rng.randint(0, max(h, 1))
+            alpha = rng.randint(6, 18)
+            painter.setBrush(QBrush(QColor(40, 30, 20, alpha)))
+            painter.drawEllipse(QPointF(tx, ty), rng.randint(2, 10), rng.randint(1, 5))
 
         painter.translate(self._pan_x, self._pan_y)
 
         if not self._skills:
-            painter.setPen(QColor(80, 60, 90))
+            painter.setPen(QColor(80, 60, 50))
             painter.setFont(_font('Segoe UI', 10))
             painter.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, "暂无技能数据")
             painter.end()
             return
 
         cx = w / 2
-        cy = h * 0.12
         class_color = CLASS_COLORS.get(self._class_name, '#ff6b35')
         cc = QColor(class_color)
 
-        center_r = _px(22)
-        center_glow = QRadialGradient(cx, cy, center_r + _px(16))
-        center_glow.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), 160))
-        center_glow.setColorAt(0.6, QColor(cc.red(), cc.green(), cc.blue(), 60))
-        center_glow.setColorAt(1, QColor(0, 0, 0, 0))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(center_glow))
-        painter.drawEllipse(QPointF(cx, cy), center_r + _px(16), center_r + _px(16))
-
-        center_fill = QRadialGradient(cx, cy, center_r)
-        center_fill.setColorAt(0, QColor(min(255, cc.red()+80), min(255, cc.green()+80), min(255, cc.blue()+80), 250))
-        center_fill.setColorAt(1, QColor(min(255, cc.red()+40), min(255, cc.green()+40), min(255, cc.blue()+40), 230))
-        painter.setBrush(QBrush(center_fill))
-        painter.setPen(QPen(cc, 2))
-        painter.drawEllipse(QPointF(cx, cy), center_r, center_r)
-
-        painter.setPen(QColor(255, 255, 255, 230))
-        painter.setFont(_font('Segoe UI', 8, QFont.Bold))
-        painter.drawText(QRectF(cx - center_r, cy - center_r, center_r * 2, center_r * 2),
-                         Qt.AlignCenter, self._class_name[:2] if self._class_name else 'D4')
-
-        self._node_positions = []
-        n_cats = len(self._skills)
-        if n_cats == 0:
+        tiers = self._map_to_tiers()
+        if not tiers:
             painter.end()
             return
 
-        arc_span = min(180, 50 + n_cats * 25)
-        base_angle = -90 - arc_span / 2
-        angle_step = arc_span / max(n_cats - 1, 1) if n_cats > 1 else 0
+        self._node_positions = []
 
-        rng = random.Random(42)
+        class_cy = _px(35)
+        class_r = _px(22)
+        pulse = 0.5 + 0.5 * math.sin(self._phase)
 
-        for i, (cat, skills) in enumerate(self._skills.items()):
+        glow_r = class_r + _px(14 + 5 * pulse)
+        class_glow = QRadialGradient(cx, class_cy, glow_r)
+        class_glow.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), int(130 + 40 * pulse)))
+        class_glow.setColorAt(0.5, QColor(cc.red(), cc.green(), cc.blue(), int(50 + 25 * pulse)))
+        class_glow.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(class_glow))
+        painter.drawEllipse(QPointF(cx, class_cy), glow_r, glow_r)
+
+        ds = class_r
+        diamond = QPainterPath()
+        diamond.moveTo(cx, class_cy - ds)
+        diamond.lineTo(cx + ds, class_cy)
+        diamond.lineTo(cx, class_cy + ds)
+        diamond.lineTo(cx - ds, class_cy)
+        diamond.closeSubpath()
+        fill = QLinearGradient(cx - ds, class_cy - ds, cx + ds, class_cy + ds)
+        fill.setColorAt(0, QColor(min(255, cc.red() + 80), min(255, cc.green() + 80), min(255, cc.blue() + 80), 240))
+        fill.setColorAt(1, QColor(min(255, cc.red() + 40), min(255, cc.green() + 40), min(255, cc.blue() + 40), 220))
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(cc, 2))
+        painter.drawPath(diamond)
+
+        painter.setPen(QColor(255, 255, 255, 230))
+        painter.setFont(_font('Segoe UI', 8, QFont.Bold))
+        painter.drawText(QRectF(cx - class_r, class_cy - class_r, class_r * 2, class_r * 2),
+                         Qt.AlignCenter, self._class_name[:2] if self._class_name else 'D4')
+
+        tier_top = class_cy + class_r + _px(18)
+        available_h = h - tier_top - _px(10)
+        tier_h = min(available_h / max(len(tiers), 1), _px(150))
+
+        prev_node_y = class_cy + class_r
+
+        for tier_idx, (tier_name, skills) in enumerate(tiers):
             if not isinstance(skills, list):
                 continue
-            angle_deg = base_angle + i * angle_step
-            angle_rad = math.radians(angle_deg)
 
-            jitter_x = rng.uniform(-3, 3) * _px(1)
-            jitter_y = rng.uniform(-3, 3) * _px(1)
+            tier_cy = tier_top + tier_idx * tier_h + tier_h * 0.5
 
-            prev_x = cx
-            prev_y = cy
+            sep_y = tier_top + tier_idx * tier_h
+            sep_grad = QLinearGradient(_px(20), sep_y, w - _px(20), sep_y)
+            sep_grad.setColorAt(0, QColor(80, 50, 30, 0))
+            sep_grad.setColorAt(0.2, QColor(80, 50, 30, 100))
+            sep_grad.setColorAt(0.5, QColor(120, 70, 40, 140))
+            sep_grad.setColorAt(0.8, QColor(80, 50, 30, 100))
+            sep_grad.setColorAt(1, QColor(80, 50, 30, 0))
+            painter.setPen(QPen(QBrush(sep_grad), 1))
+            painter.drawLine(int(_px(20)), int(sep_y), int(w - _px(20)), int(sep_y))
 
-            if skills:
-                first_dist = _px(70)
-                fx = cx + first_dist * math.cos(angle_rad) + jitter_x
-                fy = cy + first_dist * math.sin(angle_rad) + jitter_y
-                painter.setPen(QColor(200, 180, 220, 240))
-                painter.setFont(_font('Segoe UI', 7, QFont.Bold))
-                painter.drawText(QRectF(fx - _px(40), fy - _px(22), _px(80), _px(14)),
-                                 Qt.AlignCenter, cat)
+            dm = _px(4)
+            dm_path = QPainterPath()
+            dm_path.moveTo(cx, sep_y - dm)
+            dm_path.lineTo(cx + dm, sep_y)
+            dm_path.lineTo(cx, sep_y + dm)
+            dm_path.lineTo(cx - dm, sep_y)
+            dm_path.closeSubpath()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(120, 70, 40, 160)))
+            painter.drawPath(dm_path)
 
-            for j, skill in enumerate(skills):
-                name = skill if isinstance(skill, str) else skill.get('name', '')
-                points = ''
-                is_active = False
-                if isinstance(skill, str):
-                    import re
-                    match = re.match(r'(.+?)\s+(\d+)$', skill.strip())
-                    if match:
-                        name, points = match.group(1), match.group(2)
-                        is_active = points and points != '0'
-                else:
-                    points = str(skill.get('points', ''))
-                    is_active = skill.get('active', points and points != '0')
+            painter.setPen(QColor(180, 150, 100, 220))
+            painter.setFont(_font('Segoe UI', 7, QFont.Bold))
+            painter.drawText(QRectF(_px(10), sep_y + _px(2), _px(70), _px(14)),
+                             Qt.AlignLeft | Qt.AlignVCenter, tier_name)
 
-                dist = _px(70) + j * _px(55)
-                jx = jitter_x * (0.5 + 0.5 * rng.random())
-                jy = jitter_y * (0.5 + 0.5 * rng.random())
-                nx = cx + dist * math.cos(angle_rad) + jx
-                ny = cy + dist * math.sin(angle_rad) + jy
+            tier_has_active = any(self._parse_skill(s)[3] for s in skills) if skills else False
 
-                self._node_positions.append({'x': nx, 'y': ny, 'name': name, 'active': is_active})
+            if tier_has_active:
+                for gi in range(4):
+                    alpha = max(15, 200 - gi * 50)
+                    painter.setPen(QPen(QColor(220, 50, 30, alpha), _px(4 - gi)))
+                    painter.drawLine(int(cx), int(prev_node_y + _px(2)), int(cx), int(tier_cy - _px(2)))
+                painter.setPen(QPen(QColor(255, 80, 40, 230), _px(1.5)))
+                painter.drawLine(int(cx), int(prev_node_y + _px(2)), int(cx), int(tier_cy - _px(2)))
 
-                ctrl1_x = prev_x + (nx - prev_x) * 0.4
-                ctrl1_y = prev_y + (ny - prev_y) * 0.1
-                ctrl2_x = prev_x + (nx - prev_x) * 0.6
-                ctrl2_y = prev_y + (ny - prev_y) * 0.9
+                flow_t = (self._phase * 0.25 + tier_idx * 0.15) % 1.0
+                flow_y = prev_node_y + (tier_cy - prev_node_y) * flow_t
+                pg = QRadialGradient(cx, flow_y, _px(6))
+                pg.setColorAt(0, QColor(255, 120, 60, 200))
+                pg.setColorAt(1, QColor(255, 50, 30, 0))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(pg))
+                painter.drawEllipse(QPointF(cx, flow_y), _px(6), _px(6))
+            else:
+                painter.setPen(QPen(QColor(70, 60, 50, 100), _px(1), Qt.DashLine))
+                painter.drawLine(int(cx), int(prev_node_y + _px(2)), int(cx), int(tier_cy - _px(2)))
 
-                conn_path = QPainterPath()
-                conn_path.moveTo(prev_x, prev_y)
-                conn_path.cubicTo(ctrl1_x, ctrl1_y, ctrl2_x, ctrl2_y, nx, ny)
+            if not skills:
+                prev_node_y = tier_cy
+                continue
 
-                if is_active:
-                    for glow_i in range(3):
-                        alpha = max(20, 160 - glow_i * 45)
-                        painter.setPen(QPen(QColor(255, 100, 50, alpha), _px(3 - glow_i)))
-                        painter.setBrush(Qt.NoBrush)
-                        painter.drawPath(conn_path)
-                    painter.setPen(QPen(QColor(255, 120, 60, 240), _px(1.5)))
-                    painter.drawPath(conn_path)
-                else:
-                    painter.setPen(QPen(QColor(100, 90, 120, 140), _px(1), Qt.DashLine))
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawPath(conn_path)
+            parsed = [self._parse_skill(s) for s in skills]
+            active_size = _px(40)
+            passive_r = _px(10)
+            gap = _px(8)
 
-                node_r = _px(14)
-                if is_active:
-                    glow = QRadialGradient(nx, ny, node_r + _px(8))
-                    glow.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), 180))
-                    glow.setColorAt(0.5, QColor(cc.red(), cc.green(), cc.blue(), 80))
-                    glow.setColorAt(1, QColor(0, 0, 0, 0))
-                    painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(glow))
-                    painter.drawEllipse(QPointF(nx, ny), node_r + _px(8), node_r + _px(8))
+            active_items = [(i, p) for i, p in enumerate(parsed) if p[3]]
+            if not active_items:
+                active_items = [(0, parsed[0])]
+                passive_items = [(i, p) for i, p in enumerate(parsed) if i != 0]
+            else:
+                passive_items = [(i, p) for i, p in enumerate(parsed) if not p[3]]
 
-                    fill = QLinearGradient(nx - node_r, ny - node_r, nx + node_r, ny + node_r)
-                    fill.setColorAt(0, QColor(min(255, cc.red()+100), min(255, cc.green()+100), min(255, cc.blue()+100), 250))
-                    fill.setColorAt(1, QColor(min(255, cc.red()+60), min(255, cc.green()+60), min(255, cc.blue()+60), 230))
-                    painter.setBrush(QBrush(fill))
-                    painter.setPen(QPen(cc, 2))
-                    painter.drawEllipse(QPointF(nx, ny), node_r, node_r)
-                else:
-                    fill = QRadialGradient(nx, ny, node_r)
-                    fill.setColorAt(0, QColor(45, 38, 55, 220))
-                    fill.setColorAt(1, QColor(35, 28, 45, 240))
-                    painter.setBrush(QBrush(fill))
-                    painter.setPen(QPen(QColor(110, 100, 130, 160), 1, Qt.DashLine))
-                    painter.drawEllipse(QPointF(nx, ny), node_r, node_r)
+            n_act = len(active_items)
+            total_act_w = n_act * active_size + (n_act - 1) * gap
+            act_start_x = cx - total_act_w / 2
+
+            act_positions = []
+            for ai, (orig_i, (name, pts, max_pts, is_a)) in enumerate(active_items):
+                ax = act_start_x + ai * (active_size + gap) + active_size / 2
+                ay = tier_cy
+                act_positions.append((ax, ay, name, pts, max_pts, orig_i))
+
+            for ax, ay, name, pts, max_pts, orig_i in act_positions:
+                half = active_size / 2
+                p2 = 0.5 + 0.5 * math.sin(self._phase + ax * 0.02)
+
+                gr = half + _px(10 + 4 * p2)
+                ng = QRadialGradient(ax, ay, gr)
+                ng.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), int(110 + 50 * p2)))
+                ng.setColorAt(0.5, QColor(cc.red(), cc.green(), cc.blue(), int(40 + 20 * p2)))
+                ng.setColorAt(1, QColor(0, 0, 0, 0))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(ng))
+                painter.drawEllipse(QPointF(ax, ay), gr, gr)
+
+                rect = QRectF(ax - half, ay - half, active_size, active_size)
+                nf = QLinearGradient(ax - half, ay - half, ax + half, ay + half)
+                nf.setColorAt(0, QColor(min(255, cc.red() + 100), min(255, cc.green() + 100), min(255, cc.blue() + 100), 240))
+                nf.setColorAt(1, QColor(min(255, cc.red() + 50), min(255, cc.green() + 50), min(255, cc.blue() + 50), 220))
+                painter.setBrush(QBrush(nf))
+                painter.setPen(QPen(cc, 2))
+                painter.drawRoundedRect(rect, _px(6), _px(6))
+
+                inner = rect.adjusted(_px(2), _px(2), -_px(2), -_px(2))
+                painter.setPen(QPen(QColor(255, 255, 255, 50), 1))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(inner, _px(4), _px(4))
 
                 if name:
-                    painter.setPen(QColor(255, 255, 255, 250) if is_active else QColor(180, 170, 200, 220))
-                    painter.setFont(_font('Segoe UI', 6, QFont.Bold if is_active else QFont.Normal))
-                    painter.drawText(QRectF(nx - node_r, ny - node_r, node_r * 2, node_r * 2),
-                                     Qt.AlignCenter, name[:4])
+                    painter.setPen(QColor(255, 255, 255, 240))
+                    painter.setFont(_font('Segoe UI', 6, QFont.Bold))
+                    painter.drawText(rect, Qt.AlignCenter, name[:4])
 
-                if points:
+                if max_pts > 0:
                     painter.setPen(QColor('#ffe44d'))
                     painter.setFont(_font('Segoe UI', 6, QFont.Bold))
-                    painter.drawText(QRectF(nx - node_r, ny + node_r + 2, node_r * 2, _px(14)),
-                                     Qt.AlignCenter, points)
+                    painter.drawText(QRectF(ax - half, ay + half + _px(2), active_size, _px(12)),
+                                     Qt.AlignCenter, f"{pts}/{max_pts}")
 
-                prev_x = nx
-                prev_y = ny
+                self._node_positions.append({'x': ax, 'y': ay, 'name': name, 'active': True})
+
+            for pi, (orig_i, (name, pts, max_pts, is_a)) in enumerate(passive_items):
+                parent_idx = pi % max(len(act_positions), 1)
+                pax, pay, _, _, _, _ = act_positions[parent_idx]
+
+                side = 1 if pi % 2 == 0 else -1
+                branch_count = sum(1 for pp_i, _ in enumerate(passive_items)
+                                   if pp_i < pi and pp_i % max(len(act_positions), 1) == parent_idx)
+                h_offset = active_size / 2 + passive_r + _px(6) + branch_count * (passive_r * 2 + _px(4))
+                v_offset = _px(12 + branch_count * _px(6))
+
+                px = pax + side * h_offset
+                py = pay + side * v_offset * 0.3
+
+                if pts > 0:
+                    for gi in range(2):
+                        alpha = max(20, 130 - gi * 50)
+                        painter.setPen(QPen(QColor(200, 50, 30, alpha), _px(2 - gi * 0.5)))
+                        painter.drawLine(int(pax), int(pay), int(px), int(py))
+                else:
+                    painter.setPen(QPen(QColor(70, 60, 50, 90), _px(1), Qt.DotLine))
+                    painter.drawLine(int(pax), int(pay), int(px), int(py))
+
+                if pts > 0:
+                    pg2 = QRadialGradient(px, py, passive_r + _px(3))
+                    pg2.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), 70))
+                    pg2.setColorAt(1, QColor(0, 0, 0, 0))
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(pg2))
+                    painter.drawEllipse(QPointF(px, py), passive_r + _px(3), passive_r + _px(3))
+
+                    pf = QRadialGradient(px, py, passive_r)
+                    pf.setColorAt(0, QColor(min(255, cc.red() + 60), min(255, cc.green() + 60), min(255, cc.blue() + 60), 220))
+                    pf.setColorAt(1, QColor(min(255, cc.red() + 20), min(255, cc.green() + 20), min(255, cc.blue() + 20), 200))
+                    painter.setBrush(QBrush(pf))
+                    painter.setPen(QPen(QColor(cc.red(), cc.green(), cc.blue(), 180), 1.5))
+                    painter.drawEllipse(QPointF(px, py), passive_r, passive_r)
+                else:
+                    pf = QRadialGradient(px, py, passive_r)
+                    pf.setColorAt(0, QColor(40, 35, 30, 220))
+                    pf.setColorAt(1, QColor(30, 25, 20, 240))
+                    painter.setBrush(QBrush(pf))
+                    painter.setPen(QPen(QColor(90, 80, 70, 130), 1, Qt.DashLine))
+                    painter.drawEllipse(QPointF(px, py), passive_r, passive_r)
+
+                if name:
+                    painter.setPen(QColor(200, 190, 170, 220) if pts > 0 else QColor(120, 110, 100, 170))
+                    painter.setFont(_font('Segoe UI', 5))
+                    painter.drawText(QRectF(px - passive_r, py - passive_r, passive_r * 2, passive_r * 2),
+                                     Qt.AlignCenter, name[:3])
+
+                if max_pts > 0:
+                    painter.setPen(QColor('#ffe44d') if pts > 0 else QColor(100, 90, 80, 150))
+                    painter.setFont(_font('Segoe UI', 5, QFont.Bold))
+                    painter.drawText(QRectF(px - passive_r, py + passive_r + _px(1), passive_r * 2, _px(10)),
+                                     Qt.AlignCenter, f"{pts}/{max_pts}")
+
+                self._node_positions.append({'x': px, 'y': py, 'name': name, 'active': pts > 0})
+
+            prev_node_y = tier_cy
 
         self._phase += 0.08
         painter.end()
@@ -563,6 +727,154 @@ class D4ParagonBoardWidget(QWidget):
         self._class_name = class_name
         self.update()
 
+    def _cross_positions(self, n, bw, bh, gx, gy):
+        if n == 0:
+            return []
+        pos = [(0, 0)]
+        if n == 1:
+            return pos
+        pos.append((0, -(bh + gy)))
+        if n == 2:
+            return pos
+        pos.append((-(bw + gx), -(bh + gy)))
+        if n == 3:
+            return pos
+        pos.append((bw + gx, -(bh + gy)))
+        if n == 4:
+            return pos
+        pos.append((0, -2 * (bh + gy)))
+        for i in range(5, n):
+            ring = (i - 4 + 2) // 3
+            slot = (i - 4) % 3
+            col = slot - 1
+            pos.append((col * (bw + gx), -(ring + 1) * (bh + gy)))
+        return pos
+
+    def _draw_node_normal(self, painter, tx, ty, r):
+        painter.setPen(QPen(QColor(100, 95, 110), _px(0.8)))
+        painter.setBrush(QBrush(QColor(55, 50, 65, 210)))
+        painter.drawEllipse(QPointF(tx, ty), r * 0.7, r * 0.7)
+
+    def _draw_node_magic(self, painter, tx, ty, r):
+        painter.setPen(Qt.NoPen)
+        glow = QRadialGradient(tx, ty, r * 1.8)
+        glow.setColorAt(0, QColor(60, 120, 220, 40))
+        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(QPointF(tx, ty), r * 1.8, r * 1.8)
+        painter.setPen(QPen(QColor(80, 140, 230), _px(1.5)))
+        painter.setBrush(QBrush(QColor(35, 55, 100, 230)))
+        painter.drawEllipse(QPointF(tx, ty), r * 0.9, r * 0.9)
+
+    def _draw_node_rare(self, painter, tx, ty, r):
+        painter.setPen(QPen(QColor(220, 180, 60), _px(1.5)))
+        painter.setBrush(QBrush(QColor(50, 40, 25, 230)))
+        painter.drawEllipse(QPointF(tx, ty), r * 0.95, r * 0.95)
+        d = r * 0.35
+        dp = QPainterPath()
+        dp.moveTo(tx, ty - d)
+        dp.lineTo(tx + d, ty)
+        dp.lineTo(tx, ty + d)
+        dp.lineTo(tx - d, ty)
+        dp.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(220, 180, 60, 200)))
+        painter.drawPath(dp)
+
+    def _draw_node_legendary(self, painter, tx, ty, r, board_idx):
+        pulse = 0.5 + 0.5 * math.sin(self._phase + board_idx * 1.3)
+        glow_r = r * (2.4 + 0.6 * pulse)
+        painter.setPen(Qt.NoPen)
+        glow = QRadialGradient(tx, ty, glow_r)
+        glow.setColorAt(0, QColor(255, 120, 30, int(80 + 60 * pulse)))
+        glow.setColorAt(0.3, QColor(255, 80, 20, int(50 + 40 * pulse)))
+        glow.setColorAt(0.6, QColor(200, 40, 10, int(30 + 20 * pulse)))
+        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(QPointF(tx, ty), glow_r, glow_r)
+        painter.setPen(QPen(QColor(255, 180, 50), _px(2)))
+        painter.setBrush(QBrush(QColor(80, 50, 20, 240)))
+        painter.drawEllipse(QPointF(tx, ty), r * 1.1, r * 1.1)
+        painter.setPen(QColor(255, 200, 80))
+        painter.setFont(_font('Segoe UI', 9, QFont.Bold))
+        tr = QRectF(tx - r, ty - r, r * 2, r * 2)
+        painter.drawText(tr, Qt.AlignCenter, '★')
+
+    def _draw_node_glyph(self, painter, tx, ty, r, cc):
+        painter.setPen(Qt.NoPen)
+        glow = QRadialGradient(tx, ty, r * 2.2)
+        glow.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), 100))
+        glow.setColorAt(0.5, QColor(cc.red(), cc.green(), cc.blue(), 40))
+        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(QPointF(tx, ty), r * 2.2, r * 2.2)
+        painter.setPen(QPen(QColor(180, 140, 80), _px(2)))
+        painter.setBrush(QBrush(QColor(30, 25, 40, 230)))
+        painter.drawEllipse(QPointF(tx, ty), r * 1.3, r * 1.3)
+        inner_d = r * 0.55
+        dp = QPainterPath()
+        dp.moveTo(tx, ty - inner_d)
+        dp.lineTo(tx + inner_d, ty)
+        dp.lineTo(tx, ty + inner_d)
+        dp.lineTo(tx - inner_d, ty)
+        dp.closeSubpath()
+        painter.setPen(QPen(QColor(200, 60, 60), _px(1)))
+        painter.setBrush(QBrush(QColor(180, 50, 50, 200)))
+        painter.drawPath(dp)
+
+    def _draw_node_gate(self, painter, tx, ty, r, side):
+        painter.setPen(QPen(QColor(180, 140, 70), _px(1.5)))
+        painter.setBrush(QBrush(QColor(60, 45, 30, 220)))
+        painter.drawEllipse(QPointF(tx, ty), r * 0.85, r * 0.85)
+        a = _px(5)
+        if side == 'top':
+            _draw_arrow(painter, tx, ty + a, tx, ty - a, '#c8963c', 1)
+        elif side == 'bottom':
+            _draw_arrow(painter, tx, ty - a, tx, ty + a, '#c8963c', 1)
+        elif side == 'left':
+            _draw_arrow(painter, tx + a, ty, tx - a, ty, '#c8963c', 1)
+        else:
+            _draw_arrow(painter, tx - a, ty, tx + a, ty, '#c8963c', 1)
+
+    def _draw_glyph_diamond(self, painter, tx, ty, radius):
+        dp = QPainterPath()
+        dp.moveTo(tx, ty - radius)
+        dp.lineTo(tx + radius, ty)
+        dp.lineTo(tx, ty + radius)
+        dp.lineTo(tx - radius, ty)
+        dp.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(200, 40, 40, 25)))
+        painter.drawPath(dp)
+        painter.setPen(QPen(QColor(200, 50, 50, 60), _px(1), Qt.DashLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(dp)
+
+    def _draw_paths(self, painter, bx, by, rows, cols, spacing, center_r, center_c):
+        for r in range(rows):
+            for c in range(cols):
+                dist = abs(r - center_r) + abs(c - center_c)
+                if dist > 2:
+                    continue
+                tx = bx + c * spacing + spacing / 2
+                ty = by + r * spacing + spacing / 2
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        ndist = abs(nr - center_r) + abs(nc - center_c)
+                        if ndist <= 2:
+                            ntx = bx + nc * spacing + spacing / 2
+                            nty = by + nr * spacing + spacing / 2
+                            is_main = (r == center_r or c == center_c)
+                            if is_main:
+                                lc = QColor(255, 200, 100, 180)
+                                lw = _px(2.5)
+                            else:
+                                lc = QColor(200, 160, 80, 100)
+                                lw = _px(1.5)
+                            painter.setPen(QPen(lc, lw))
+                            painter.drawLine(int(tx), int(ty), int(ntx), int(nty))
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -570,10 +882,20 @@ class D4ParagonBoardWidget(QWidget):
         h = self.height()
 
         bg = QLinearGradient(0, 0, 0, h)
-        bg.setColorAt(0, QColor(25, 18, 35, 240))
-        bg.setColorAt(0.5, QColor(18, 12, 28, 250))
-        bg.setColorAt(1, QColor(25, 18, 35, 240))
+        bg.setColorAt(0, QColor(20, 14, 28, 245))
+        bg.setColorAt(0.3, QColor(14, 9, 20, 250))
+        bg.setColorAt(0.7, QColor(16, 11, 23, 250))
+        bg.setColorAt(1, QColor(22, 16, 30, 245))
         painter.fillRect(self.rect(), bg)
+
+        painter.setPen(Qt.NoPen)
+        step = _px(48)
+        for ix in range(0, w + step, step):
+            for iy in range(0, h + step, step):
+                v = ((ix * 7 + iy * 13) % 37)
+                alpha = 3 + (v % 6)
+                painter.setBrush(QBrush(QColor(40, 30, 50, alpha)))
+                painter.drawRect(ix, iy, step, step)
 
         if not self._boards:
             painter.setPen(QColor(80, 60, 90))
@@ -584,34 +906,92 @@ class D4ParagonBoardWidget(QWidget):
 
         cols = 9
         rows = 7
-        tile_size = _px(18)
-        spacing = tile_size + _px(4)
+        tile_size = _px(16)
+        node_r = tile_size / 2
+        spacing = tile_size + _px(5)
         board_w = cols * spacing
         board_h = rows * spacing
         n_boards = len(self._boards)
-        boards_per_row = min(n_boards, 2)
-        total_w = boards_per_row * board_w + (boards_per_row - 1) * _px(40)
-        start_x = max((w - total_w) / 2, _px(10))
-        y_offset = _px(30)
+        gap_x = _px(30)
+        gap_y = _px(40)
         class_color = CLASS_COLORS.get(self._class_name, '#ff6b35')
         cc = QColor(class_color)
+
+        positions = self._cross_positions(n_boards, board_w, board_h, gap_x, gap_y)
+
+        min_x = min(p[0] for p in positions)
+        max_x = max(p[0] + board_w for p in positions)
+        min_y = min(p[1] for p in positions)
+        max_y = max(p[1] + board_h for p in positions)
+        total_w = max_x - min_x
+        total_h = max_y - min_y
+        ox = (w - total_w) / 2 - min_x
+        oy = (h - total_h) / 2 - min_y
+
+        for i in range(n_boards - 1):
+            x1 = positions[i][0] + ox + board_w / 2
+            y1 = positions[i][1] + oy + board_h / 2
+            x2 = positions[i + 1][0] + ox + board_w / 2
+            y2 = positions[i + 1][1] + oy + board_h / 2
+            conn = QPainterPath()
+            conn.moveTo(x1, y1)
+            mid_y = (y1 + y2) / 2
+            conn.cubicTo(x1, mid_y, x2, mid_y, x2, y2)
+            painter.setPen(QPen(QColor(120, 90, 50, 60), _px(2)))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(conn)
+            _draw_arrow(painter, (x1 + x2) / 2, mid_y, x2, y2, '#8a6a3a', 1)
+
+        center_r = rows // 2
+        center_c = cols // 2
 
         for board_idx, board in enumerate(self._boards):
             if not isinstance(board, dict):
                 continue
-            col_in_row = board_idx % boards_per_row
-            row_idx = board_idx // boards_per_row
-            bx = start_x + col_in_row * (board_w + _px(40))
-            by = y_offset + row_idx * (board_h + _px(50))
+            bx = positions[board_idx][0] + ox
+            by = positions[board_idx][1] + oy
+
+            pad = _px(8)
+            br = QRectF(bx - pad, by - pad, board_w + pad * 2, board_h + pad * 2)
+
+            shadow = QRadialGradient(br.center().x(), br.center().y(),
+                                     max(br.width(), br.height()) * 0.7)
+            shadow.setColorAt(0, QColor(8, 5, 14, 220))
+            shadow.setColorAt(1, QColor(4, 2, 8, 180))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(shadow))
+            painter.drawRoundedRect(br, _px(6), _px(6))
+
+            painter.setPen(QPen(QColor(70, 55, 35, 160), _px(1.5)))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(br, _px(6), _px(6))
+
+            inner = br.adjusted(_px(2), _px(2), -_px(2), -_px(2))
+            painter.setPen(QPen(QColor(50, 40, 28, 100), _px(1)))
+            painter.drawRoundedRect(inner, _px(5), _px(5))
 
             board_name = board.get('name', f'巅峰盘 {board_idx + 1}')
-            painter.setPen(QColor(255, 215, 0))
+            name_rect = QRectF(bx - pad, by - pad - _px(20), board_w + pad * 2, _px(18))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(10, 7, 16, 200)))
+            painter.drawRoundedRect(name_rect, _px(3), _px(3))
+            painter.setPen(QColor(210, 180, 120))
             painter.setFont(_font('Segoe UI', 8, QFont.Bold))
-            painter.drawText(QRectF(bx, by - _px(18), board_w, _px(16)),
-                             Qt.AlignCenter, board_name)
+            painter.drawText(name_rect, Qt.AlignCenter, board_name)
 
-            center_r = rows // 2
-            center_c = cols // 2
+            rotation = board.get('rotation', 0)
+            if rotation:
+                rot_text = f'↻{rotation}°'
+                painter.setPen(QColor(140, 120, 80))
+                painter.setFont(_font('Segoe UI', 6))
+                rr = QRectF(bx + board_w - _px(30), by - pad - _px(18), _px(28), _px(14))
+                painter.drawText(rr, Qt.AlignCenter, rot_text)
+
+            self._draw_paths(painter, bx, by, rows, cols, spacing, center_r, center_c)
+
+            glyph_tx = bx + center_c * spacing + spacing / 2
+            glyph_ty = by + center_r * spacing + spacing / 2
+            self._draw_glyph_diamond(painter, glyph_tx, glyph_ty, 3.2 * spacing)
 
             for r in range(rows):
                 for c in range(cols):
@@ -619,89 +999,32 @@ class D4ParagonBoardWidget(QWidget):
                     ty = by + r * spacing + spacing / 2
                     dist = abs(r - center_r) + abs(c - center_c)
                     is_center = (r == center_r and c == center_c)
-                    is_gate = (dist == 3 and (r == 0 or r == rows - 1 or c == 0 or c == cols - 1))
+                    is_gate = (dist == 3 and
+                               (r == 0 or r == rows - 1 or c == 0 or c == cols - 1))
                     is_legendary = (dist == 3 and not is_gate and (r + c) % 3 == 0)
                     is_rare = (dist == 2 and not is_legendary and not is_gate)
-                    is_path = (dist <= 2)
-
-                    half = tile_size / 2
-                    tile_rect = QRectF(tx - half, ty - half, tile_size, tile_size)
+                    is_magic = (dist == 1 and not is_center)
 
                     if is_center:
-                        painter.setPen(Qt.NoPen)
-                        glow = QRadialGradient(tx, ty, tile_size)
-                        glow.setColorAt(0, QColor(cc.red(), cc.green(), cc.blue(), 130))
-                        glow.setColorAt(1, QColor(0, 0, 0, 0))
-                        painter.setBrush(QBrush(glow))
-                        painter.drawEllipse(QPointF(tx, ty), tile_size, tile_size)
-
-                        painter.setPen(QPen(QColor(120, 200, 255), 2))
-                        painter.setBrush(QBrush(QColor(40, 70, 110, 220)))
-                        painter.drawEllipse(QPointF(tx, ty), half * 0.9, half * 0.9)
-
-                        painter.setPen(QColor(255, 255, 255))
-                        painter.setFont(_font('Segoe UI', 7, QFont.Bold))
-                        painter.drawText(QRectF(tx - half, ty - half, tile_size, tile_size),
-                                         Qt.AlignCenter, 'G')
+                        self._draw_node_glyph(painter, tx, ty, node_r, cc)
                     elif is_gate:
-                        painter.setPen(QPen(QColor(220, 150, 60), 1.5))
-                        painter.setBrush(QBrush(QColor(100, 70, 40, 200)))
-                        painter.drawRoundedRect(tile_rect, 2, 2)
-
-                        arrow_size = _px(4)
                         if r == 0:
-                            _draw_arrow(painter, tx, ty + arrow_size, tx, ty - arrow_size, '#dc963c', 1)
+                            side = 'top'
                         elif r == rows - 1:
-                            _draw_arrow(painter, tx, ty - arrow_size, tx, ty + arrow_size, '#dc963c', 1)
+                            side = 'bottom'
                         elif c == 0:
-                            _draw_arrow(painter, tx + arrow_size, ty, tx - arrow_size, ty, '#dc963c', 1)
+                            side = 'left'
                         else:
-                            _draw_arrow(painter, tx - arrow_size, ty, tx + arrow_size, ty, '#dc963c', 1)
+                            side = 'right'
+                        self._draw_node_gate(painter, tx, ty, node_r, side)
                     elif is_legendary:
-                        painter.setPen(Qt.NoPen)
-                        glow = QRadialGradient(tx, ty, tile_size)
-                        glow.setColorAt(0, QColor(255, 215, 0, 50))
-                        glow.setColorAt(0.5, QColor(255, 215, 0, 80))
-                        glow.setColorAt(1, QColor(0, 0, 0, 0))
-                        painter.setBrush(QBrush(glow))
-                        painter.drawEllipse(QPointF(tx, ty), tile_size, tile_size)
-
-                        painter.setPen(QPen(QColor(255, 215, 0), 1.5))
-                        painter.setBrush(QBrush(QColor(140, 110, 30, 240)))
-                        painter.drawRoundedRect(tile_rect, 2, 2)
-
-                        painter.setPen(QColor(255, 215, 0))
-                        painter.setFont(_font('Segoe UI', 8))
-                        painter.drawText(tile_rect, Qt.AlignCenter, '★')
+                        self._draw_node_legendary(painter, tx, ty, node_r, board_idx)
                     elif is_rare:
-                        painter.setPen(QPen(QColor(100, 160, 255), 1))
-                        painter.setBrush(QBrush(QColor(60, 90, 140, 240)))
-                        painter.drawRoundedRect(tile_rect, 2, 2)
+                        self._draw_node_rare(painter, tx, ty, node_r)
+                    elif is_magic:
+                        self._draw_node_magic(painter, tx, ty, node_r)
                     else:
-                        painter.setPen(QPen(QColor(90, 85, 110), 0.5))
-                        painter.setBrush(QBrush(QColor(50, 45, 65, 200)))
-                        painter.drawRoundedRect(tile_rect, 2, 2)
-
-                    if is_path and not is_center:
-                        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                            nr, nc = r + dr, c + dc
-                            if 0 <= nr < rows and 0 <= nc < cols:
-                                ndist = abs(nr - center_r) + abs(nc - center_c)
-                                if ndist <= 2:
-                                    ntx = bx + nc * spacing + spacing / 2
-                                    nty = by + nr * spacing + spacing / 2
-                                    line_color = QColor(255, 200, 100, 200) if (r == center_r or c == center_c) else QColor(180, 150, 100, 120)
-                                    painter.setPen(QPen(line_color, _px(2)))
-                                    painter.drawLine(int(tx), int(ty), int(ntx), int(nty))
-
-            if board_idx < n_boards - 1 and (board_idx + 1) % boards_per_row != 0:
-                next_col = (board_idx + 1) % boards_per_row
-                next_bx = start_x + next_col * (board_w + _px(40))
-                conn_x1 = bx + board_w
-                conn_x2 = next_bx
-                conn_y = by + board_h / 2
-                painter.setPen(QPen(QColor(100, 80, 110, 100), _px(1), Qt.DashLine))
-                painter.drawLine(int(conn_x1), int(conn_y), int(conn_x2), int(conn_y))
+                        self._draw_node_normal(painter, tx, ty, node_r)
 
         self._phase += 0.08
         painter.end()
@@ -709,13 +1032,19 @@ class D4ParagonBoardWidget(QWidget):
 
 class D4EquipmentPanel(QWidget):
 
+    _SLOT_SILHOUETTE_MAP = {
+        '远程武器': '主手武器',
+        '双持武器1': '主手武器',
+        '双持武器2': '副手武器',
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items = {}
         self._class_name = ''
         self._title = ''
         self._phase = 0
-        self.setMinimumSize(_px(440), _px(500))
+        self.setMinimumSize(_px(520), _px(580))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_items(self, items, class_name='', title=''):
@@ -731,10 +1060,17 @@ class D4EquipmentPanel(QWidget):
         h = self.height()
 
         bg = QLinearGradient(0, 0, 0, h)
-        bg.setColorAt(0, QColor(25, 18, 35, 240))
-        bg.setColorAt(0.5, QColor(18, 12, 28, 250))
-        bg.setColorAt(1, QColor(25, 18, 35, 240))
+        bg.setColorAt(0, QColor(18, 12, 8, 245))
+        bg.setColorAt(0.3, QColor(12, 8, 5, 250))
+        bg.setColorAt(0.7, QColor(15, 10, 6, 250))
+        bg.setColorAt(1, QColor(18, 12, 8, 245))
         painter.fillRect(self.rect(), bg)
+
+        painter.setPen(Qt.NoPen)
+        for i in range(0, h, _px(40)):
+            alpha = 8 + int(6 * math.sin(i * 0.1))
+            painter.setBrush(QBrush(QColor(40, 30, 20, alpha)))
+            painter.drawRect(0, i, w, _px(1))
 
         items = self._items
         if isinstance(items, dict):
@@ -743,34 +1079,50 @@ class D4EquipmentPanel(QWidget):
             items = []
 
         if not items:
-            painter.setPen(QColor(80, 60, 90))
+            painter.setPen(QColor(100, 80, 60))
             painter.setFont(_font('Segoe UI', 10))
             painter.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, "暂无装备数据")
             painter.end()
             return
 
-        stats_w = _px(140)
-        equip_x = stats_w + _px(8)
-        equip_w = w - stats_w - _px(16)
+        stats_w = _px(130)
+        skill_bar_h = _px(56)
+        margin = _px(10)
 
-        self._draw_stats_panel(painter, 0, 0, stats_w, h, items)
+        equip_area_w = w - stats_w - margin * 3
+        equip_area_h = h - skill_bar_h - margin * 2
+        equip_area_x = margin
+        equip_area_y = margin
 
-        equip_center_x = equip_x + equip_w / 2
-        char_h = _px(200)
-        char_cy = _px(30) + char_h / 2
-        _draw_character_silhouette(painter, equip_center_x, char_cy, char_h)
+        if self._title:
+            painter.setPen(QColor(200, 180, 140))
+            painter.setFont(_font('Segoe UI', 10, QFont.Bold))
+            painter.drawText(QRectF(equip_area_x, _px(2), equip_area_w, _px(20)),
+                             Qt.AlignCenter, self._title)
 
-        slot_w = _px(54)
-        slot_h = _px(54)
-        slot_gap = _px(6)
+        left_slots = ['头盔', '胸甲', '手套', '裤子', '靴子', '远程武器']
+        right_slots = ['护符', '戒指1', '戒指2', '双持武器1', '双持武器2']
 
-        slot_layout = [
-            [('头盔', 0.5)],
-            [('胸甲', 0.35), ('主手武器', 0.7)],
-            [('手套', 0.25), ('裤子', 0.55), ('副手武器', 0.8)],
-            [('靴子', 0.35)],
-            [('护符', 0.25), ('戒指1', 0.5), ('戒指2', 0.75)],
-        ]
+        slot_size = _px(48)
+        slot_gap = _px(8)
+        name_w = _px(80)
+        row_h = slot_size + slot_gap
+
+        left_col_x = equip_area_x + _px(8)
+        right_col_x = equip_area_x + equip_area_w - slot_size - name_w - _px(8)
+        center_x = equip_area_x + equip_area_w / 2
+
+        char_h = min(equip_area_h - _px(40), _px(260))
+        char_cy = equip_area_y + char_h / 2 + _px(20)
+
+        _draw_character_silhouette(painter, center_x, char_cy, char_h, QColor(60, 45, 30))
+
+        overlay = QRadialGradient(center_x, char_cy, char_h * 0.6)
+        overlay.setColorAt(0, QColor(30, 20, 10, 40))
+        overlay.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(overlay))
+        painter.drawEllipse(QPointF(center_x, char_cy), char_h * 0.6, char_h * 0.6)
 
         item_by_slot = {}
         for item in items:
@@ -778,55 +1130,99 @@ class D4EquipmentPanel(QWidget):
                 slot = item.get('slot', item.get('type', ''))
                 item_by_slot[slot] = item
 
-        row_y = _px(20)
-        for row in slot_layout:
-            for slot_name, x_ratio in row:
-                sx = equip_x + equip_w * x_ratio - slot_w / 2
-                sy = row_y
-                item_data = item_by_slot.get(slot_name, {})
-                self._draw_equip_slot(painter, sx, sy, slot_w, slot_h, slot_name, item_data)
-            row_y += slot_h + slot_gap
+        left_start_y = equip_area_y + _px(24)
+        for i, slot_name in enumerate(left_slots):
+            sy = left_start_y + i * row_h
+            item_data = item_by_slot.get(slot_name, {})
+            self._draw_equip_slot(painter, left_col_x, sy, slot_size, slot_size,
+                                  slot_name, item_data, name_w)
 
-        skill_bar_y = h - _px(50)
-        skill_slot_size = _px(36)
+        right_start_y = equip_area_y + _px(24)
+        for i, slot_name in enumerate(right_slots):
+            sy = right_start_y + i * row_h
+            item_data = item_by_slot.get(slot_name, {})
+            self._draw_equip_slot(painter, right_col_x, sy, slot_size, slot_size,
+                                  slot_name, item_data, name_w)
+
+        stats_x = w - stats_w - margin
+        stats_y = margin
+        stats_h = h - skill_bar_h - margin * 2
+        self._draw_stats_panel(painter, stats_x, stats_y, stats_w, stats_h, items)
+
+        skill_bar_y = h - skill_bar_h
+        skill_keys = ['1', '2', '3', '4', 'L', 'R']
+        skill_slot_size = _px(40)
         skill_gap = _px(6)
-        n_skills = 6
+        n_skills = len(skill_keys)
         total_skill_w = n_skills * skill_slot_size + (n_skills - 1) * skill_gap
-        skill_start_x = equip_x + (equip_w - total_skill_w) / 2
+        skill_start_x = equip_area_x + (equip_area_w - total_skill_w) / 2
 
-        painter.setPen(QColor(100, 80, 110, 120))
+        painter.setPen(QColor(120, 100, 70, 150))
         painter.setFont(_font('Segoe UI', 7))
-        painter.drawText(QRectF(equip_x, skill_bar_y - _px(16), equip_w, _px(14)),
+        painter.drawText(QRectF(equip_area_x, skill_bar_y - _px(14), equip_area_w, _px(12)),
                          Qt.AlignCenter, '技能栏')
 
-        for i in range(n_skills):
+        bar_bg = QRectF(skill_start_x - _px(6), skill_bar_y - _px(2),
+                        total_skill_w + _px(12), skill_slot_size + _px(4))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(10, 8, 5, 180)))
+        painter.drawRoundedRect(bar_bg, 4, 4)
+        painter.setPen(QPen(QColor(80, 60, 30, 100), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(bar_bg, 4, 4)
+
+        for i, key in enumerate(skill_keys):
             sx = skill_start_x + i * (skill_slot_size + skill_gap)
             rect = QRectF(sx, skill_bar_y, skill_slot_size, skill_slot_size)
-            painter.setPen(QPen(QColor(80, 70, 90, 120), 1))
-            painter.setBrush(QBrush(QColor(20, 15, 25, 180)))
+
+            slot_bg = QLinearGradient(sx, skill_bar_y, sx, skill_bar_y + skill_slot_size)
+            slot_bg.setColorAt(0, QColor(25, 20, 12, 200))
+            slot_bg.setColorAt(1, QColor(15, 12, 8, 200))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(slot_bg))
             painter.drawRoundedRect(rect, 3, 3)
-            painter.setPen(QColor(180, 180, 200, 180))
-            painter.setFont(_font('Segoe UI', 7))
-            painter.drawText(rect, Qt.AlignCenter, str(i + 1))
+
+            painter.setPen(QPen(QColor(90, 70, 40, 160), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, 3, 3)
+
+            key_rect = QRectF(sx + _px(2), skill_bar_y + _px(2), _px(14), _px(12))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+            painter.drawRoundedRect(key_rect, 2, 2)
+            painter.setPen(QColor(180, 160, 120))
+            painter.setFont(_font('Segoe UI', 6, QFont.Bold))
+            painter.drawText(key_rect, Qt.AlignCenter, key)
 
         self._phase += 0.08
         painter.end()
 
     def _draw_stats_panel(self, painter, x, y, w, h, items):
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(10, 8, 15, 200)))
-        painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
+        bg = QLinearGradient(x, y, x, y + h)
+        bg.setColorAt(0, QColor(15, 10, 6, 220))
+        bg.setColorAt(0.5, QColor(10, 7, 4, 230))
+        bg.setColorAt(1, QColor(15, 10, 6, 220))
+        painter.setBrush(QBrush(bg))
+        painter.drawRoundedRect(QRectF(x, y, w, h), 5, 5)
 
-        painter.setPen(QPen(QColor(80, 50, 30, 120), 1))
+        painter.setPen(QPen(QColor(80, 60, 30, 120), 1))
         painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(QRectF(x, y, w, h), 4, 4)
+        painter.drawRoundedRect(QRectF(x, y, w, h), 5, 5)
 
-        painter.setPen(QColor(180, 160, 200, 220))
+        inner = QRectF(x + _px(2), y + _px(2), w - _px(4), h - _px(4))
+        painter.setPen(QPen(QColor(50, 38, 20, 80), 1))
+        painter.drawRoundedRect(inner, 4, 4)
+
+        painter.setPen(QColor(200, 175, 120, 230))
         painter.setFont(_font('Segoe UI', 9, QFont.Bold))
-        painter.drawText(QRectF(x + _px(6), y + _px(6), w - _px(12), _px(18)),
+        painter.drawText(QRectF(x + _px(8), y + _px(8), w - _px(16), _px(18)),
                          Qt.AlignLeft, '属性')
 
-        sep = QFrame()
+        sep_y = y + _px(28)
+        painter.setPen(QPen(QColor(80, 60, 30, 100), 1))
+        painter.drawLine(int(x + _px(8)), int(sep_y), int(x + w - _px(8)), int(sep_y))
+
         attrs = [
             ('力量', 0), ('智力', 0), ('敏捷', 0), ('意志', 0),
             ('暴击率', 0), ('暴击伤害', 0), ('攻速', 0),
@@ -842,60 +1238,79 @@ class D4EquipmentPanel(QWidget):
                                 attrs[i] = (attr_name, v + (val if isinstance(val, (int, float)) else 0))
                                 break
 
-        ay = y + _px(28)
+        ay = sep_y + _px(8)
         for attr_name, val in attrs:
-            painter.setPen(QColor(210, 210, 220))
+            painter.setPen(QColor(160, 145, 110))
             painter.setFont(_font('Segoe UI', 7))
-            painter.drawText(QRectF(x + _px(8), ay, w * 0.55, _px(14)),
+            painter.drawText(QRectF(x + _px(10), ay, w * 0.55, _px(14)),
                              Qt.AlignLeft | Qt.AlignVCenter, attr_name)
 
-            val_color = '#ffe44d' if val > 0 else '#aaa'
-            painter.setPen(QColor(val_color))
+            val_color = QColor(255, 220, 100) if val > 0 else QColor(90, 75, 55)
+            painter.setPen(val_color)
             painter.setFont(_font('Segoe UI', 7, QFont.Bold))
+            val_text = str(val) if val else '-'
             painter.drawText(QRectF(x + w * 0.55, ay, w * 0.4, _px(14)),
-                             Qt.AlignRight | Qt.AlignVCenter, str(val) if val else '-')
-            ay += _px(16)
+                             Qt.AlignRight | Qt.AlignVCenter, val_text)
+            ay += _px(18)
 
-    def _draw_equip_slot(self, painter, x, y, sw, sh, slot_name, item_data):
+        if self._class_name:
+            class_color = CLASS_COLORS.get(self._class_name, '#ff6b35')
+            cc = QColor(class_color)
+            painter.setPen(QColor(cc.red(), cc.green(), cc.blue(), 180))
+            painter.setFont(_font('Segoe UI', 8, QFont.Bold))
+            painter.drawText(QRectF(x + _px(8), y + h - _px(24), w - _px(16), _px(18)),
+                             Qt.AlignCenter, self._class_name)
+
+    def _draw_equip_slot(self, painter, x, y, sw, sh, slot_name, item_data, name_w=0):
         rect = QRectF(x, y, sw, sh)
         rarity = item_data.get('rarity', '') if isinstance(item_data, dict) else ''
         name = item_data.get('name', '') if isinstance(item_data, dict) else ''
         rarity_color = RARITY_COLORS.get(rarity, '#555')
+        rc = QColor(rarity_color)
 
+        slot_bg = QLinearGradient(x, y, x + sw, y + sh)
+        slot_bg.setColorAt(0, QColor(20, 16, 10, 220))
+        slot_bg.setColorAt(1, QColor(14, 10, 6, 220))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(22, 18, 30, 200)))
+        painter.setBrush(QBrush(slot_bg))
         painter.drawRoundedRect(rect, 3, 3)
 
         if rarity == '神话暗金':
-            rc = QColor(rarity_color)
-            for gi in range(3):
-                alpha = max(25, 100 - gi * 30)
-                painter.setPen(QPen(QColor(255, 80, 40, alpha), _px(3 - gi)))
+            pulse = 0.5 + 0.5 * math.sin(self._phase * 2)
+            for gi in range(4):
+                alpha = max(15, int((120 - gi * 30) * (0.6 + 0.4 * pulse)))
+                painter.setPen(QPen(QColor(255, 60, 40, alpha), _px(3 - gi * 0.5)))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawRoundedRect(rect.adjusted(-_px(2 + gi), -_px(2 + gi),
                                                        _px(2 + gi), _px(2 + gi)), 4, 4)
 
             bg_grad = QLinearGradient(x, y, x + sw, y + sh)
-            bg_grad.setColorAt(0, QColor(120, 30, 30, 240))
-            bg_grad.setColorAt(1, QColor(90, 20, 40, 240))
+            bg_grad.setColorAt(0, QColor(100, 20, 15, 240))
+            bg_grad.setColorAt(1, QColor(70, 15, 20, 240))
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(bg_grad))
             painter.drawRoundedRect(rect, 3, 3)
 
-            crown_h = _px(8)
+            crown_h = _px(10)
             crown_path = QPainterPath()
-            crown_path.moveTo(x + sw * 0.2, y)
-            crown_path.lineTo(x + sw * 0.25, y - crown_h)
-            crown_path.lineTo(x + sw * 0.4, y - crown_h * 0.5)
-            crown_path.lineTo(x + sw * 0.5, y - crown_h)
-            crown_path.lineTo(x + sw * 0.6, y - crown_h * 0.5)
-            crown_path.lineTo(x + sw * 0.75, y - crown_h)
-            crown_path.lineTo(x + sw * 0.8, y)
-            painter.setPen(QPen(QColor(255, 100, 50), 1))
-            painter.setBrush(QBrush(QColor(255, 100, 50, 160)))
+            crown_path.moveTo(x + sw * 0.15, y)
+            crown_path.lineTo(x + sw * 0.2, y - crown_h)
+            crown_path.lineTo(x + sw * 0.35, y - crown_h * 0.4)
+            crown_path.lineTo(x + sw * 0.5, y - crown_h * 1.1)
+            crown_path.lineTo(x + sw * 0.65, y - crown_h * 0.4)
+            crown_path.lineTo(x + sw * 0.8, y - crown_h)
+            crown_path.lineTo(x + sw * 0.85, y)
+            painter.setPen(QPen(QColor(255, 80, 40), 1))
+            painter.setBrush(QBrush(QColor(255, 80, 40, 180)))
             painter.drawPath(crown_path)
 
-            corner_len = _px(6)
+            for gem_x_ratio in [0.2, 0.5, 0.8]:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(255, 200, 60, 220)))
+                painter.drawEllipse(QPointF(x + sw * gem_x_ratio, y - crown_h * 0.7),
+                                    _px(1.5), _px(1.5))
+
+            corner_len = _px(7)
             for cx, cy, dx, dy in [(x, y, 1, 1), (x + sw, y, -1, 1),
                                     (x, y + sh, 1, -1), (x + sw, y + sh, -1, -1)]:
                 path = QPainterPath()
@@ -903,7 +1318,7 @@ class D4EquipmentPanel(QWidget):
                 path.cubicTo(cx + dx * corner_len * 0.3, cy + dy * corner_len * 0.8,
                              cx + dx * corner_len * 0.8, cy + dy * corner_len * 0.3,
                              cx + dx * corner_len, cy + dy * corner_len)
-                painter.setPen(QPen(QColor(255, 120, 60), 1.5))
+                painter.setPen(QPen(QColor(255, 100, 50), 1.5))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawPath(path)
 
@@ -911,33 +1326,32 @@ class D4EquipmentPanel(QWidget):
                     dot_x = cx + dx * _px(2 + dot_i * 2)
                     dot_y = cy + dy * _px(2 + dot_i * 2)
                     painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(QColor(255, 120, 60, 180)))
+                    painter.setBrush(QBrush(QColor(255, 100, 50, 180)))
                     painter.drawEllipse(QPointF(dot_x, dot_y), _px(1), _px(1))
 
         elif rarity == '暗金':
-            rc = QColor(rarity_color)
-            painter.setPen(QPen(QColor(255, 160, 40), 2.5))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(rect, 3, 3)
-            inner = rect.adjusted(_px(2), _px(2), -_px(2), -_px(2))
-            painter.setPen(QPen(QColor(255, 160, 40, 160), 1))
-            painter.drawRoundedRect(inner, 2, 2)
+            glow = QRadialGradient(x + sw / 2, y + sh / 2, max(sw, sh) * 0.8)
+            glow.setColorAt(0, QColor(255, 140, 30, 40))
+            glow.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(glow))
+            painter.drawEllipse(QPointF(x + sw / 2, y + sh / 2), sw * 0.8, sh * 0.8)
 
             bg_grad = QLinearGradient(x, y, x, y + sh)
-            bg_grad.setColorAt(0, QColor(100, 60, 20, 240))
-            bg_grad.setColorAt(1, QColor(80, 45, 15, 240))
+            bg_grad.setColorAt(0, QColor(90, 55, 15, 240))
+            bg_grad.setColorAt(1, QColor(70, 40, 10, 240))
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(bg_grad))
             painter.drawRoundedRect(rect, 3, 3)
 
-            tab_h = _px(5)
-            tab_w = _px(16)
-            painter.setPen(QPen(QColor(255, 160, 40), 1))
-            painter.setBrush(QBrush(QColor(255, 160, 40, 140)))
-            painter.drawRect(int(x + sw / 2 - tab_w / 2), int(y - tab_h), int(tab_w), int(tab_h))
-            painter.drawRect(int(x + sw / 2 - tab_w / 2), int(y + sh), int(tab_w), int(tab_h))
+            painter.setPen(QPen(QColor(255, 160, 40), 2.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, 3, 3)
+            inner = rect.adjusted(_px(3), _px(3), -_px(3), -_px(3))
+            painter.setPen(QPen(QColor(255, 160, 40, 160), 1))
+            painter.drawRoundedRect(inner, 2, 2)
 
-            bracket_len = _px(5)
+            bracket_len = _px(6)
             for cx, cy, dx, dy in [(x, y, 1, 1), (x + sw, y, -1, 1),
                                     (x, y + sh, 1, -1), (x + sw, y + sh, -1, -1)]:
                 painter.setPen(QPen(QColor(255, 160, 40), 1.5))
@@ -949,7 +1363,6 @@ class D4EquipmentPanel(QWidget):
                 painter.drawEllipse(QPointF(cx + dx * _px(2), cy + dy * _px(2)), _px(1), _px(1))
 
         elif rarity == '传奇':
-            rc = QColor(rarity_color)
             glow = QRadialGradient(x + sw / 2, y + sh / 2, max(sw, sh))
             glow.setColorAt(0, QColor(rc.red(), rc.green(), rc.blue(), 35))
             glow.setColorAt(1, QColor(0, 0, 0, 0))
@@ -958,8 +1371,8 @@ class D4EquipmentPanel(QWidget):
             painter.drawEllipse(QPointF(x + sw / 2, y + sh / 2), sw, sh)
 
             bg_grad = QLinearGradient(x, y, x + sw, y + sh)
-            bg_grad.setColorAt(0, QColor(70, 45, 25, 240))
-            bg_grad.setColorAt(1, QColor(55, 35, 18, 240))
+            bg_grad.setColorAt(0, QColor(60, 38, 18, 240))
+            bg_grad.setColorAt(1, QColor(45, 28, 12, 240))
             painter.setBrush(QBrush(bg_grad))
             painter.drawRoundedRect(rect, 3, 3)
 
@@ -967,7 +1380,7 @@ class D4EquipmentPanel(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(rect, 3, 3)
 
-            tick_len = _px(4)
+            tick_len = _px(5)
             for cx, cy, dx, dy in [(x, y, 1, 1), (x + sw, y, -1, 1),
                                     (x, y + sh, 1, -1), (x + sw, y + sh, -1, -1)]:
                 painter.setPen(QPen(QColor(210, 130, 50), 1))
@@ -975,23 +1388,38 @@ class D4EquipmentPanel(QWidget):
                 painter.drawLine(int(cx), int(cy), int(cx), int(cy + dy * tick_len))
 
         elif rarity == '稀有':
-            rc = QColor(rarity_color)
             painter.setPen(QPen(QColor(255, 255, 100), 1))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(rect, 3, 3)
         else:
-            painter.setPen(QPen(QColor(70, 60, 80, 180), 1))
+            painter.setPen(QPen(QColor(60, 50, 35, 180), 1))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(rect, 3, 3)
 
-        silhouette_color = rarity_color if rarity else '#5a5a70'
+        silhouette_color = rarity_color if rarity else '#5a5a50'
         sc = QColor(silhouette_color)
-        bright_silhouette = QColor(min(255, sc.red()+60), min(255, sc.green()+60), min(255, sc.blue()+60))
+        bright_silhouette = QColor(min(255, sc.red() + 60), min(255, sc.green() + 60),
+                                   min(255, sc.blue() + 60))
         painter.setPen(QPen(bright_silhouette, 1))
-        painter.setBrush(QBrush(QColor(bright_silhouette.red(), bright_silhouette.green(), bright_silhouette.blue(), 220)))
-        _draw_slot_silhouette(painter, x + sw / 2, y + sh / 2 - _px(4), slot_name, min(sw, sh) * 0.6)
+        painter.setBrush(QBrush(QColor(bright_silhouette.red(), bright_silhouette.green(),
+                                       bright_silhouette.blue(), 220)))
+        sil_slot = self._SLOT_SILHOUETTE_MAP.get(slot_name, slot_name)
+        _draw_slot_silhouette(painter, x + sw / 2, y + sh / 2 - _px(4), sil_slot, min(sw, sh) * 0.6)
 
-        if name:
+        if name_w > 0 and name:
+            name_x = x + sw + _px(6)
+            name_y = y + sh / 2 - _px(8)
+            painter.setPen(QColor(rarity_color))
+            painter.setFont(_font('Segoe UI', 7, QFont.Bold))
+            display = name if len(name) <= 8 else name[:7] + '..'
+            painter.drawText(QRectF(name_x, name_y, name_w, _px(14)),
+                             Qt.AlignLeft | Qt.AlignVCenter, display)
+
+            painter.setPen(QColor(100, 85, 60))
+            painter.setFont(_font('Segoe UI', 6))
+            painter.drawText(QRectF(name_x, name_y + _px(13), name_w, _px(12)),
+                             Qt.AlignLeft | Qt.AlignVCenter, slot_name)
+        elif name:
             painter.setPen(QColor(rarity_color))
             painter.setFont(_font('Segoe UI', 6, QFont.Bold))
             display = name if len(name) <= 5 else name[:4] + '..'
