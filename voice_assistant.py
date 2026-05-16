@@ -475,9 +475,9 @@ class VoiceInput:
 class VoiceOutput:
     """语音输出（TTS）"""
 
-    ENGINES = ['melotts', 'edge_tts', 'pyttsx3']
+    ENGINES = ['melotts_python', 'melotts', 'edge_tts', 'pyttsx3']
 
-    def __init__(self, engine='auto', voice=None, rate=180):
+    def __init__(self, engine='auto', voice=None, rate=180, device='AUTO'):
         self.engine_name = None
         self.pyttsx3_engine = None
         self.voice = voice
@@ -486,7 +486,7 @@ class VoiceOutput:
         self._speaking = False
         self._speech_queue = []
         self._lock = threading.Lock()
-
+        self.device = device
         self._init_engine(engine)
 
         if PYGAME_AVAILABLE:
@@ -501,7 +501,9 @@ class VoiceOutput:
             if eng is None:
                 continue
             try:
-                if eng == 'melotts' and MELOTTS_AVAILABLE:
+                if eng == 'melotts_python':
+                    self._init_melotts_python()
+                elif eng == 'melotts' and MELOTTS_AVAILABLE:
                     self.engine_name = 'melotts'
                     self.available = True
                     logger.info("语音输出引擎: MeloTTS (OpenVINO C++)")
@@ -551,7 +553,9 @@ class VoiceOutput:
         with self._lock:
             self._speaking = True
         try:
-            if self.engine_name == 'melotts':
+            if self.engine_name == 'melotts_python':
+                self._speak_melotts_python(text)
+            elif self.engine_name == 'melotts':
                 self._speak_melotts(text)
             elif self.engine_name == 'edge_tts':
                 self._speak_edge_tts(text)
@@ -562,6 +566,31 @@ class VoiceOutput:
         finally:
             with self._lock:
                 self._speaking = False
+
+    def _init_melotts_python(self):
+        from openvino_inference import MeloTTSEngine
+        self.engine = MeloTTSEngine(device=self.device)
+        self.engine_name = 'melotts_python'
+        self.available = True
+        logger.info("语音输出引擎: MeloTTS (OpenVINO Python)")
+
+    def _speak_melotts_python(self, text):
+        """使用MeloTTS Python引擎播报"""
+        tmp_wav = os.path.join(tempfile.gettempdir(), f'_game_tts_{os.getpid()}_{int(time.time())}.wav')
+        try:
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in text)
+            lang = 'ZH' if has_chinese else 'EN'
+            self.engine.synthesize_to_file(text, tmp_wav, speaker=1, lang=lang)
+            if os.path.exists(tmp_wav):
+                self._play_audio_file(tmp_wav)
+        except Exception as e:
+            logger.error(f"MeloTTS Python 播报失败: {e}")
+        finally:
+            try:
+                if os.path.exists(tmp_wav):
+                    os.unlink(tmp_wav)
+            except:
+                pass
 
     def _speak_melotts(self, text):
         """使用MeloTTS C++引擎播报"""

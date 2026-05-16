@@ -29,13 +29,14 @@ _CPP_OCR_LABEL = os.path.join(_CPP_OCR_DIR, 'data', 'ppocr_keys_v1.txt')
 class GameOCR:
     """游戏画面OCR识别 - 多引擎支持"""
 
-    ENGINES = ['openvino_cpp', 'paddleocr', 'easyocr', 'tesseract']
+    ENGINES = ['openvino_python', 'openvino_cpp', 'paddleocr', 'easyocr', 'tesseract']
 
-    def __init__(self, engine=None, lang='ch'):
+    def __init__(self, engine=None, lang='ch', device='AUTO'):
         self.lang = lang
         self.engine_name = None
         self.engine = None
         self.tesseract_cmd = None
+        self.device = device
         self._init_engine(engine)
 
     def _init_engine(self, preferred_engine=None):
@@ -44,7 +45,9 @@ class GameOCR:
             if eng is None:
                 continue
             try:
-                if eng == 'openvino_cpp':
+                if eng == 'openvino_python':
+                    self._init_openvino_python()
+                elif eng == 'openvino_cpp':
                     self._init_openvino_cpp()
                 elif eng == 'paddleocr':
                     self._init_paddleocr()
@@ -63,6 +66,10 @@ class GameOCR:
                 continue
 
         logger.warning("所有OCR引擎均不可用，将使用模拟模式")
+
+    def _init_openvino_python(self):
+        from openvino_inference import PaddleOCREngine
+        self.engine = PaddleOCREngine(device=self.device)
 
     def _init_openvino_cpp(self):
         if not os.path.isfile(_CPP_OCR_EXE):
@@ -215,12 +222,16 @@ class GameOCR:
             x, y, w, h = max(0, x), max(0, y), max(1, w), max(1, h)
             img = img[y:y + h, x:x + w]
 
-        if self.engine_name == 'openvino_cpp':
+        if self.engine_name == 'openvino_python':
+            processed = img
+        elif self.engine_name == 'openvino_cpp':
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'openvino_cpp':
+        if self.engine_name == 'openvino_python':
+            return self.engine.extract_text(processed)
+        elif self.engine_name == 'openvino_cpp':
             return self._ocr_openvino_cpp(processed)
         elif self.engine_name == 'paddleocr':
             return self._ocr_paddleocr(processed)
@@ -247,12 +258,16 @@ class GameOCR:
             x, y, w, h = region
             img = img[y:y + h, x:x + w]
 
-        if self.engine_name == 'openvino_cpp':
+        if self.engine_name == 'openvino_python':
+            processed = img
+        elif self.engine_name == 'openvino_cpp':
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'openvino_cpp':
+        if self.engine_name == 'openvino_python':
+            return self.engine.ocr(processed)
+        elif self.engine_name == 'openvino_cpp':
             return self._ocr_openvino_cpp_detail(processed)
         elif self.engine_name == 'paddleocr':
             return self._ocr_paddleocr_detail(processed)
