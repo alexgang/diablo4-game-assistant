@@ -144,7 +144,7 @@ class RealTimeAssistant:
 
         if self.sdk_available:
             try:
-                sdk_result = self.sdk.knowledge_query(screen_text)
+                sdk_result = self.sdk.knowledge_query(instance_id, screen_text)
                 if sdk_result:
                     recommendations = sdk_result.get('recommendations', [])
                     return {
@@ -231,7 +231,7 @@ class RealTimeAssistant:
         """
         if self.sdk_available:
             try:
-                sdk_result = self.sdk.knowledge_query(text)
+                sdk_result = self.sdk.knowledge_query(instance_id, text)
                 if sdk_result:
                     return {
                         'text': text,

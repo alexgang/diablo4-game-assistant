@@ -83,3 +83,21 @@ ocr_result.jpg
 opencv-*
 
 workshop/
+
+_*.png
+_*.py
+_*.bat
+_*.ps1
+_*.txt
+*.bmp
+kernel.errors.txt
+pylibs/
+3/
+GamingAssistant Package/
+.vs/
+*.png
+!game_screenshots/*.png
+game_screenshots/printwindow_test.png
+game_screenshots/test_*.png
+game_screenshots/dxcam_test.png
+game_screenshots/_*.png

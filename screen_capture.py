@@ -190,7 +190,7 @@ class ScreenCapture:
 
     def _resize_if_needed(self, img, max_size):
         h, w = img.shape[:2]
-        if max(h, w) <= max_size:
+        if max_size <= 0 or max(h, w) <= max_size:
             return img
         scale = max_size / max(h, w)
         new_w, new_h = int(w * scale), int(h * scale)

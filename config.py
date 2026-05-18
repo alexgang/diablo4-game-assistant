@@ -88,6 +88,12 @@ DAMAGE_CONFIG = {
     'ocr_region': 'chat_area',
 }
 
+SDK_SERVER_PATH = os.path.join(
+    BASE_DIR, 'GamingAssistant Package', '游戏助手服务端', '游戏助手服务端',
+    'apps', 'GameAssistantToolServer.exe'
+)
+SDK_SERVER_WORK_DIR = os.path.dirname(SDK_SERVER_PATH)
+
 SDK_CONFIG = {
     'server_url': os.environ.get('GAS_SERVER_URL', 'http://127.0.0.1:9190'),
     'instance_id': 'd4_assistant',

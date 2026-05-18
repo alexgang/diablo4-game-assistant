@@ -24,10 +24,43 @@
 import sys
 import os
 import logging
+import subprocess
+import time
 
-from config import SDK_CONFIG
+from config import SDK_CONFIG, SDK_SERVER_PATH, SDK_SERVER_WORK_DIR
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def ensure_sdk_server():
+    """确保 SDK 服务器已启动，如未启动则给出提示"""
+    from sdk_client import GamingAssistantSDK
+    sdk_url = SDK_CONFIG['server_url']
+    sdk = GamingAssistantSDK(sdk_url)
+
+    if sdk.check_server():
+        print(f"SDK服务器已连接: {sdk_url}")
+        return True
+
+    print(f"\n" + "=" * 60)
+    print("SDK服务器未运行，请执行以下操作：")
+    print("1. 在另一个终端窗口中运行:")
+    print(f"   cd \"{SDK_SERVER_WORK_DIR}\"")
+    print(f"   .\\{os.path.basename(SDK_SERVER_PATH)}")
+    print("2. 等待服务器初始化完成后，游戏助手将自动连接")
+    print("=" * 60 + "\n")
+    
+    # 等待一段时间再检查一次
+    for i in range(30):
+        time.sleep(1)
+        if sdk.check_server():
+            print(f"SDK服务器已连接 (等待{i + 1}秒)")
+            return True
+        if i % 10 == 9:
+            print(f"  等待SDK服务器连接... ({i + 1}秒)")
+
+    print("SDK服务器仍未连接，请先启动服务器")
+    return False
 
 
 def main():
@@ -74,16 +107,9 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
 
         sdk_url = SDK_CONFIG['server_url']
         try:
-            from sdk_client import GamingAssistantSDK
-            sdk = GamingAssistantSDK(sdk_url)
-            if sdk.check_server():
-                print(f"SDK服务器已连接: {sdk_url}")
-            else:
-                print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
+            ensure_sdk_server()
         except Exception:
-            print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
-
-        print("启动图形界面...")
+            pass
         app = QApplication(sys.argv)
         window = MainWindow(
             use_web_data=use_web,
@@ -106,16 +132,11 @@ def run_cli_mode(use_web=False, use_ocr=True, ocr_engine=None,
     """命令行模式"""
     from realtime_assistant import RealTimeAssistant
 
-    sdk_url = SDK_CONFIG['server_url']
     try:
-        from sdk_client import GamingAssistantSDK
-        sdk = GamingAssistantSDK(sdk_url)
-        if sdk.check_server():
-            print(f"SDK服务器已连接: {sdk_url}")
-        else:
-            print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
+        ensure_sdk_server()
+        print(f"SDK服务器已连接: {SDK_CONFIG['server_url']}")
     except Exception:
-        print(f"SDK服务器不可用: {sdk_url}，将使用本地模式")
+        print(f"SDK服务器不可用: {SDK_CONFIG['server_url']}，将使用本地模式")
 
     assistant = RealTimeAssistant(
         use_web_data=use_web,
