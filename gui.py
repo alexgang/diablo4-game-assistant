@@ -18,11 +18,14 @@ import ctypes
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QFrame, QScrollArea, QLineEdit,
+    QTabWidget, QCheckBox,
 )
 from PyQt5.QtGui import QFont, QPalette, QColor
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 
 from game_detector import GameDetector
+from scene_classifier import SceneCategory, classify_scene, get_category_display_name, get_category_color
+
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,134 @@ try:
     DAMAGE_AVAILABLE = True
 except ImportError:
     DAMAGE_AVAILABLE = False
+
+
+class SceneVisionWorker(QThread):
+    """后台 Vision 场景识别线程 - 5秒/次"""
+    scene_detected = pyqtSignal(dict)
+
+    def __init__(self, game_detector, interval=5.0):
+        super().__init__()
+        self.detector = game_detector
+        self.interval = interval
+        self._running = True
+
+    def run(self):
+        while self._running:
+            try:
+                result = self._detect_scene()
+                if result:
+                    self.scene_detected.emit(result)
+            except Exception as e:
+                logger.error(f"Vision 场景识别失败: {e}")
+            for _ in range(int(self.interval * 10)):
+                if not self._running:
+                    return
+                self.msleep(100)
+
+    def _detect_scene(self):
+        """检测当前场景"""
+        if not self.detector or not self.detector.sdk_available:
+            return None
+        try:
+            tmp_path = self._get_temp_image_path()
+            if not tmp_path:
+                return None
+            results = self.detector.sdk.vision_query(
+                self.detector.instance_id,
+                tmp_path,
+                topk=5,
+                mode='basic',
+            )
+            if not results:
+                results = self.detector.sdk.vision_query(
+                    self.detector.instance_id,
+                    tmp_path,
+                    topk=5,
+                    mode='accurate',
+                )
+            if not results:
+                return None
+            for top in results:
+                scene_id = top.get('scene_id', '')
+                score = top.get('score', 0)
+                if score >= 0.3:
+                    picture_id = top.get('picture_id', '')
+                    category = classify_scene(scene_id)
+                    return {
+                        'scene_id': scene_id,
+                        'picture_id': picture_id,
+                        'score': score,
+                        'category': category,
+                    }
+            return None
+        except Exception as e:
+            logger.error(f"Vision 查询失败: {e}")
+            return None
+
+    def _get_temp_image_path(self):
+        """截取当前游戏画面并保存到临时文件"""
+        try:
+            import dxcam
+            import cv2
+            import ctypes
+            from ctypes import wintypes
+            import os
+
+            game_names = ['暗黑破坏神IV', 'Diablo IV']
+            hwnd = None
+            for name in game_names:
+                hwnd = ctypes.windll.user32.FindWindowW(None, name)
+                if hwnd:
+                    break
+
+            if hwnd:
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                cx = (rect.left + rect.right) // 2
+                cy = (rect.top + rect.bottom) // 2
+
+                import mss
+                region = None
+                with mss.MSS() as sct:
+                    for i, mon in enumerate(sct.monitors[1:], 1):
+                        if mon['left'] <= cx < mon['left'] + mon['width']:
+                            region = (mon['left'], mon['top'], mon['width'], mon['height'])
+                            break
+
+                for out_idx in range(4):
+                    try:
+                        if region:
+                            camera = dxcam.create(device_idx=0, output_idx=out_idx,
+                                                  region=region, output_color="BGR")
+                        else:
+                            camera = dxcam.create(device_idx=0, output_idx=out_idx,
+                                                  output_color="BGR")
+                        frame = camera.grab()
+                        camera.release()
+                        if frame is not None and frame.size > 0 and frame.mean() > 1:
+                            break
+                    except Exception:
+                        continue
+                else:
+                    return None
+            else:
+                return None
+
+            tmp_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'game_screenshots', '_scene_query_temp.png'
+            )
+            os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+            cv2.imwrite(tmp_path, frame)
+            return tmp_path
+        except Exception as e:
+            logger.error(f"截图失败: {e}")
+            return None
+
+    def stop(self):
+        self._running = False
+        self.wait()
 
 
 class AnalysisWorker(QThread):
@@ -448,6 +579,10 @@ class MainWindow(QMainWindow):
         self.damage_monitor = None
         self.is_damage_monitoring = False
 
+        self.current_scene_category = SceneCategory.UNKNOWN
+        self.scene_vision_worker = None
+        self.scene_query_path = None
+
         if VOICE_AVAILABLE:
             try:
                 self.voice_assistant = VoiceAssistant(
@@ -462,6 +597,7 @@ class MainWindow(QMainWindow):
         self.start_analysis()
         self._update_voice_status_display()
         self._init_hotkeys()
+        self._start_scene_vision_worker()
 
     def init_ui(self):
         self.setWindowTitle("暗黑破坏神游戏助手")
@@ -557,13 +693,67 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_btn)
         layout.addWidget(search_widget)
 
+        self.tabs = QTabWidget()
+        self.tabs.setFont(_ff('Microsoft YaHei', 10, QFont.Bold))
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid rgba(139, 0, 0, 0.4);
+                background-color: rgba(0, 0, 0, 0.3);
+            }
+            QTabBar::tab {
+                background-color: rgba(40, 40, 50, 0.8);
+                color: #aaa;
+                padding: 6px 10px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                min-width: 50px;
+            }
+            QTabBar::tab:selected {
+                background-color: rgba(139, 0, 0, 0.6);
+                color: #fff;
+            }
+            QTabBar::tab:!selected:hover {
+                background-color: rgba(60, 60, 70, 0.8);
+            }
+        """)
+        self._create_scene_tabs()
+        layout.addWidget(self.tabs)
+
+        scene_status_widget = QWidget()
+        scene_status_widget.setStyleSheet("background-color: transparent;")
+        scene_status_layout = QHBoxLayout(scene_status_widget)
+        scene_status_layout.setContentsMargins(4, 0, 4, 0)
+        scene_status_layout.setSpacing(6)
+
+        self.scene_info_label = QLabel("当前场景: -- (识别中...)")
+        self.scene_info_label.setFont(_ff('Microsoft YaHei', 10))
+        self.scene_info_label.setStyleSheet("color: #9b59b6; background-color: transparent;")
+        scene_status_layout.addWidget(self.scene_info_label, 1)
+
+        self.auto_switch_check = QCheckBox("自动切Tab")
+        self.auto_switch_check.setChecked(True)
+        self.auto_switch_check.setFont(_ff('Microsoft YaHei', 9))
+        self.auto_switch_check.setStyleSheet("color: #ccc; background-color: transparent;")
+        scene_status_layout.addWidget(self.auto_switch_check)
+
+        self.scene_refresh_btn = QPushButton("识别")
+        self.scene_refresh_btn.setStyleSheet(
+            "background-color: #0066cc; color: white; border: none; "
+            f"border-radius: 3px; padding: 3px 8px; font-size: {_fs(10)}px;"
+        )
+        self.scene_refresh_btn.clicked.connect(self._manual_scene_detect)
+        scene_status_layout.addWidget(self.scene_refresh_btn)
+
+        layout.addWidget(scene_status_widget)
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("background-color: transparent; border: none;")
         scroll_area.viewport().setStyleSheet("background-color: transparent;")
         self.guide_widget = GuideWidget()
         scroll_area.setWidget(self.guide_widget)
-        layout.addWidget(scroll_area)
+        layout.addWidget(scroll_area, 0)
 
         control_widget = QWidget()
         control_layout = QHBoxLayout(control_widget)
@@ -703,6 +893,141 @@ class MainWindow(QMainWindow):
 
         self.dragging = False
         self.drag_position = None
+
+    def _create_scene_tabs(self):
+        """创建场景 Tab：战斗 / 装备 / 技能 / 地图"""
+
+        def make_textedit(placeholder, color):
+            te = QTextEdit()
+            te.setReadOnly(True)
+            te.setStyleSheet(
+                f"background-color: rgba(0,0,0,0.3); color: #e0e0e0; border: none; "
+                f"font-size: {_fs(12)}px;"
+            )
+            te.setPlainText(placeholder)
+            return te
+
+        # Tab 0: 战斗
+        self.tab_combat = QWidget()
+        combat_layout = QVBoxLayout(self.tab_combat)
+        combat_layout.setContentsMargins(4, 4, 4, 4)
+        self.combat_info = make_textedit(
+            "⚔ 战斗信息\n\n"
+            "• 当前怪物信息\n"
+            "• BOSS 攻略\n"
+            "• DPS 统计\n"
+            "• 战斗建议\n\n"
+            "等待 Vision 识别战斗场景...",
+            '#e74c3c',
+        )
+        combat_layout.addWidget(self.combat_info)
+        self.tabs.addTab(self.tab_combat, "⚔ 战斗")
+
+        # Tab 1: 装备
+        self.tab_equipment = QWidget()
+        equip_layout = QVBoxLayout(self.tab_equipment)
+        equip_layout.setContentsMargins(4, 4, 4, 4)
+        self.equip_info = make_textedit(
+            "🛡 装备/物品\n\n"
+            "• 物品词条说明\n"
+            "• 装备对比建议\n"
+            "• Code of Power 推荐\n"
+            "• 装备精工/强化建议\n\n"
+            "等待 Vision 识别装备场景...",
+            '#ff6b35',
+        )
+        equip_layout.addWidget(self.equip_info)
+        self.tabs.addTab(self.tab_equipment, "🛡 装备")
+
+        # Tab 2: 技能
+        self.tab_skill = QWidget()
+        skill_layout = QVBoxLayout(self.tab_skill)
+        skill_layout.setContentsMargins(4, 4, 4, 4)
+        self.skill_info = make_textedit(
+            "🔮 技能/天赋\n\n"
+            "• 当前职业 BD 推荐\n"
+            "• 技能加点方案\n"
+            "• 巅峰盘建议\n"
+            "• 技能搭配说明\n\n"
+            "等待 Vision 识别技能场景...",
+            '#9b59b6',
+        )
+        skill_layout.addWidget(self.skill_info)
+        self.tabs.addTab(self.tab_skill, "🔮 技能")
+
+        # Tab 3: 地图
+        self.tab_map = QWidget()
+        map_layout = QVBoxLayout(self.tab_map)
+        map_layout.setContentsMargins(4, 4, 4, 4)
+        self.map_info = make_textedit(
+            "🗺 地图/任务\n\n"
+            "• 当前位置\n"
+            "• 任务追踪\n"
+            "• 地下城推荐\n"
+            "• BOSS 召唤时间表\n\n"
+            "等待 Vision 识别地图场景...",
+            '#3498db',
+        )
+        map_layout.addWidget(self.map_info)
+        self.tabs.addTab(self.tab_map, "🗺 地图")
+
+    def _start_scene_vision_worker(self):
+        """启动后台 Vision 场景识别（5秒/次）"""
+        if not self.detector or not self.detector.sdk_available:
+            self.scene_info_label.setText("当前场景: SDK未连接")
+            return
+
+        self.scene_vision_worker = SceneVisionWorker(self.detector, interval=5.0)
+        self.scene_vision_worker.scene_detected.connect(self._on_scene_detected)
+        self.scene_vision_worker.start()
+
+    def _on_scene_detected(self, result):
+        """Vision 场景识别结果回调"""
+        category = result['category']
+        scene_id = result['scene_id']
+        score = result['score']
+
+        display_name = get_category_display_name(category)
+        color = get_category_color(category)
+        score_pct = f"{score * 100:.0f}%"
+
+        self.scene_info_label.setText(
+            f"场景: {scene_id} | {display_name} ({score_pct})"
+        )
+        self.scene_info_label.setStyleSheet(f"color: {color}; background-color: transparent;")
+
+        if self.auto_switch_check.isChecked() and category != self.current_scene_category:
+            self._switch_to_category(category)
+
+        self.current_scene_category = category
+
+    def _switch_to_category(self, category):
+        """切换到指定类别 Tab"""
+        tab_index_map = {
+            SceneCategory.COMBAT: 0,
+            SceneCategory.EQUIPMENT: 1,
+            SceneCategory.SKILL: 2,
+            SceneCategory.MAP: 3,
+            SceneCategory.UNKNOWN: 0,
+        }
+        index = tab_index_map.get(category, 0)
+        self.tabs.setCurrentIndex(index)
+
+        color = get_category_color(category)
+        self.tabs.tabBar().setStyleSheet(
+            f"QTabBar::tab:selected {{ background-color: {color}; color: #fff; font-weight: bold; }}"
+        )
+
+    def _manual_scene_detect(self):
+        """手动触发场景识别"""
+        if not self.scene_vision_worker:
+            return
+        result = self.scene_vision_worker._detect_scene()
+        if result:
+            self._on_scene_detected(result)
+        else:
+            self.scene_info_label.setText("当前场景: -- (未识别)")
+            self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

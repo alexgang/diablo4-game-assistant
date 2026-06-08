@@ -109,8 +109,6 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
     """GUI模式"""
     try:
         from gui import MainWindow
-        from scene_assistant_window import SceneAssistantWindow
-        from game_detector import GameDetector
         from PyQt5.QtWidgets import QApplication
 
         sdk_url = SDK_CONFIG['server_url']
@@ -126,17 +124,7 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
             tts_engine=tts_engine,
         )
         window.show()
-
-        scene_window = None
-        try:
-            detector = GameDetector(use_ocr=True, ocr_engine=ocr_engine)
-            scene_window = SceneAssistantWindow(detector)
-            scene_window.show()
-            print("🎮 场景助手窗口已启动 (基于 Vision 5秒/次自动识别)")
-        except Exception as e:
-            print(f"场景助手窗口启动失败: {e}")
-
-        print("游戏助手已启动！")
+        print("游戏助手已启动！ (含 Vision 场景识别 5秒/次自动 Tab 切换)")
         sys.exit(app.exec_())
 
     except ImportError as e:
