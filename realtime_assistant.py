@@ -138,34 +138,12 @@ class RealTimeAssistant:
     def analyze_screen_content(self, screen_text=None):
         """分析屏幕内容并返回智能推荐"""
         if screen_text is None:
-            screen_text = self.detector.get_screen_text()
+            result = self.detector.capture_and_query()
+            self.last_ocr_text = result.get('ocr_text', '')
+            return result
 
         self.last_ocr_text = screen_text
-
-        if self.sdk_available:
-            try:
-                sdk_result = self.sdk.knowledge_query(instance_id, screen_text)
-                if sdk_result:
-                    recommendations = sdk_result.get('recommendations', [])
-                    return {
-                        'screen_text': screen_text,
-                        'recommendations': recommendations,
-                        'formatted': sdk_result.get('formatted', self.indexer.format_recommendations(recommendations)),
-                        'ocr_engine': self.ocr.engine_name if self.ocr and self.ocr.available else 'simulation',
-                        'source': 'sdk',
-                    }
-            except Exception as e:
-                logger.warning(f"SDK查询失败，回退到本地分析: {e}")
-
-        recommendations = self.indexer.get_context_recommendations(screen_text)
-
-        return {
-            'screen_text': screen_text,
-            'recommendations': recommendations,
-            'formatted': self.indexer.format_recommendations(recommendations),
-            'ocr_engine': self.ocr.engine_name if self.ocr and self.ocr.available else 'simulation',
-            'source': 'local',
-        }
+        return self.detector.analyze_game_state()
 
     def analyze_and_report(self):
         """分析并报告当前游戏状态"""
@@ -173,27 +151,27 @@ class RealTimeAssistant:
         print("  暗黑破坏神实时游戏助手 - 智能内容索引")
         print("=" * 60)
 
-        img = self.screen_capture.capture_full_screen()
-        print("✓ 屏幕捕获完成")
+        result = self.detector.capture_and_query()
+        self.last_ocr_text = result.get('ocr_text', '')
 
-        if self.ocr_recognizer and self.ocr and self.ocr.available:
-            ocr_result = self.ocr_recognizer.analyze_image(img)
-            screen_text = ocr_result.get('raw_text', '')
-            engine = ocr_result.get('engine', 'unknown')
-            print(f"✓ OCR识别完成 (引擎: {engine})")
-            if screen_text:
-                print(f"  识别文字: {screen_text[:80]}...")
-            else:
-                print("  未识别到文字，使用模拟模式")
-                screen_text = self.detector._get_simulation_text()
-        else:
-            screen_text = self.detector._get_simulation_text()
-            print("✓ 模拟模式（演示用）")
+        ocr_text = result.get('ocr_text', '')
+        scene_info = result.get('scene_info', [])
+        engine_label = result.get('ocr_engine', 'simulation')
 
-        result = self.analyze_screen_content(screen_text)
+        print(f"✓ 画面分析完成 (引擎: {engine_label})")
+        if ocr_text:
+            print(f"  OCR文字: {ocr_text[:80]}...")
+        if scene_info:
+            for s in scene_info[:3]:
+                print(f"  场景: {s.get('scene_id', '')} (置信度: {s.get('score', 0):.0%})")
 
-        print(f"\n📝 屏幕内容: {screen_text}")
-        print(f"\n{result['formatted']}")
+        knowledge_answer = result.get('knowledge_answer', '')
+        if knowledge_answer:
+            print(f"\n🤖 SDK推荐: {knowledge_answer[:200]}")
+
+        formatted = result.get('formatted', '')
+        if formatted:
+            print(f"\n{formatted}")
 
         print("=" * 60)
         return result
@@ -220,25 +198,21 @@ class RealTimeAssistant:
         return result
 
     def text_query(self, text):
-        """
-        文字查询（可用于手动输入）
-
-        Args:
-            text: 文字输入
-
-        Returns:
-            dict: 查询结果
-        """
+        """文字查询（可用于手动输入）"""
         if self.sdk_available:
             try:
-                sdk_result = self.sdk.knowledge_query(instance_id, text)
-                if sdk_result:
+                answer = self.sdk.knowledge_query(
+                    self.detector.instance_id,
+                    text,
+                    knowledge_id=self.detector.knowledge_id,
+                )
+                if answer and answer.strip():
                     return {
                         'text': text,
-                        'intent': sdk_result.get('intent', 'general_search'),
+                        'intent': 'sdk_query',
                         'query': text,
-                        'results': sdk_result.get('results', []),
-                        'response': sdk_result.get('response', self._format_text_response(sdk_result.get('results', []))),
+                        'results': [],
+                        'response': answer.strip(),
                         'spoken': False,
                         'source': 'sdk',
                     }
@@ -297,16 +271,7 @@ class RealTimeAssistant:
 
     def search(self, query, top_n=5):
         """手动搜索游戏内容"""
-        if self.sdk_available:
-            try:
-                sdk_results = self.sdk.mmr_query(query, top_n=top_n)
-                if sdk_results:
-                    return sdk_results
-            except Exception as e:
-                logger.warning(f"SDK搜索失败，回退到本地索引: {e}")
-
-        results = self.indexer.search(query, top_n=top_n)
-        return results
+        return self.detector.search(query, top_n=top_n)
 
     def update_web_data(self):
         """手动更新网站数据"""

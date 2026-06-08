@@ -24,6 +24,8 @@ class ScreenCapture:
         self._device_idx = 0
         self._output_idx = None
         self._dxcam = None
+        self._dxcam_full = None
+        self._game_rect = None
         self._detect_game_monitor()
 
     def _detect_game_monitor(self):
@@ -39,6 +41,7 @@ class ScreenCapture:
             self.game_hwnd = hwnd
             rect = wintypes.RECT()
             ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            self._game_rect = (rect.left, rect.top, rect.right, rect.bottom)
             cx = (rect.left + rect.right) // 2
             cy = (rect.top + rect.bottom) // 2
 
@@ -142,6 +145,12 @@ class ScreenCapture:
                     'height': mon_rect.bottom - mon_rect.top,
                 }
                 logger.info(f"dxcam 初始化成功: output_idx={best_out_idx}, shape={best_frame.shape}, unique={best_unique}")
+
+            if DXCAM_AVAILABLE and self._dxcam_full is None:
+                try:
+                    self._dxcam_full = dxcam.create(device_idx=0, output_idx=0, output_color="BGR")
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f"dxcam 检测失败: {e}")
 
@@ -157,22 +166,93 @@ class ScreenCapture:
             logger.debug(f"dxcam grab 失败: {e}")
             return None
 
+    def _update_game_rect(self):
+        if not self.game_hwnd:
+            return None
+        try:
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(self.game_hwnd, ctypes.byref(rect))
+            if rect.right > rect.left and rect.bottom > rect.top:
+                self._game_rect = (rect.left, rect.top, rect.right, rect.bottom)
+                return self._game_rect
+        except Exception:
+            pass
+        return None
+
+    def _is_game_foreground(self):
+        if not self.game_hwnd:
+            return False
+        return ctypes.windll.user32.GetForegroundWindow() == self.game_hwnd
+
     def capture_full_screen(self, max_size=1280):
+        game_rect = self._update_game_rect()
+
+        if game_rect and self._is_game_foreground():
+            if self._dxcam is not None:
+                frame = self._get_dxcam_frame()
+                if frame is not None and frame.size > 0:
+                    left, top, right, bottom = game_rect
+                    mon = self.game_monitor
+                    if mon:
+                        x1 = max(0, left - mon['left'])
+                        y1 = max(0, top - mon['top'])
+                        x2 = min(frame.shape[1], right - mon['left'])
+                        y2 = min(frame.shape[0], bottom - mon['top'])
+                        if x2 > x1 and y2 > y1:
+                            cropped = frame[y1:y2, x1:x2]
+                            if cropped.mean() > 5:
+                                return self._resize_if_needed(cropped, max_size)
+
+                    return self._resize_if_needed(frame, max_size)
+
+            if self._dxcam_full is not None:
+                try:
+                    frame = self._dxcam_full.grab()
+                    if frame is not None and frame.size > 0:
+                        left, top, right, bottom = game_rect
+                        mon = self.game_monitor
+                        if mon:
+                            x1 = max(0, left - mon['left'])
+                            y1 = max(0, top - mon['top'])
+                            x2 = min(frame.shape[1], right - mon['left'])
+                            y2 = min(frame.shape[0], bottom - mon['top'])
+                            if x2 > x1 and y2 > y1:
+                                cropped = frame[y1:y2, x1:x2]
+                                if cropped.mean() > 5:
+                                    return self._resize_if_needed(cropped, max_size)
+                except Exception:
+                    pass
+
+            try:
+                left, top, right, bottom = game_rect
+                w = right - left
+                h = bottom - top
+                frame = self._printwindow_capture(self.game_hwnd, w, h)
+                if frame is not None and frame.size > 0 and frame.mean() > 5:
+                    return self._resize_if_needed(frame, max_size)
+            except Exception as e:
+                logger.debug(f"PrintWindow失败: {e}")
+
         if self._dxcam is not None:
             frame = self._get_dxcam_frame()
             if frame is not None and frame.size > 0:
+                if game_rect:
+                    left, top, right, bottom = game_rect
+                    mon = self.game_monitor
+                    if mon:
+                        x1 = max(0, left - mon['left'])
+                        y1 = max(0, top - mon['top'])
+                        x2 = min(frame.shape[1], right - mon['left'])
+                        y2 = min(frame.shape[0], bottom - mon['top'])
+                        if x2 > x1 and y2 > y1:
+                            cropped = frame[y1:y2, x1:x2]
+                            if cropped.mean() > 5:
+                                return self._resize_if_needed(cropped, max_size)
                 return self._resize_if_needed(frame, max_size)
 
         mon = self.game_monitor
         if not mon:
             return np.zeros((100, 100, 3), dtype=np.uint8)
-
-        try:
-            frame = self._printwindow_capture(self.game_hwnd, mon['width'], mon['height'])
-            if frame is not None and frame.size > 0 and frame.mean() > 1:
-                return self._resize_if_needed(frame, max_size)
-        except Exception as e:
-            logger.debug(f"PrintWindow失败: {e}")
 
         try:
             import mss
@@ -181,6 +261,16 @@ class ScreenCapture:
                 img = np.array(sct_img)
                 img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
             if img.mean() > 1:
+                if game_rect:
+                    left, top, right, bottom = game_rect
+                    x1 = max(0, left - mon['left'])
+                    y1 = max(0, top - mon['top'])
+                    x2 = min(img.shape[1], right - mon['left'])
+                    y2 = min(img.shape[0], bottom - mon['top'])
+                    if x2 > x1 and y2 > y1:
+                        cropped = img[y1:y2, x1:x2]
+                        if cropped.mean() > 5:
+                            return self._resize_if_needed(cropped, max_size)
                 return self._resize_if_needed(img, max_size)
         except Exception as e:
             logger.debug(f"mss截图失败: {e}")
@@ -201,7 +291,6 @@ class ScreenCapture:
             return None
 
         user32 = ctypes.windll.user32
-        PW_CLIENTONLY = 1
 
         hwndDC = user32.GetWindowDC(hwnd)
         if not hwndDC:
@@ -221,7 +310,10 @@ class ScreenCapture:
                     oldBitMap = ctypes.windll.gdi32.SelectObject(mfcDC, saveBitMap)
 
                     try:
-                        user32.PrintWindow(hwnd, mfcDC, PW_CLIENTONLY)
+                        for flag in [2, 3, 1]:
+                            result = user32.PrintWindow(hwnd, mfcDC, flag)
+                            if result:
+                                break
 
                         buf_size = width * height * 4
                         bmp_data = ctypes.create_string_buffer(buf_size)
@@ -300,8 +392,9 @@ class ScreenCapture:
         return img
 
     def __del__(self):
-        if self._dxcam is not None:
-            try:
-                self._dxcam.release()
-            except Exception:
-                pass
+        for cam in (self._dxcam, self._dxcam_full):
+            if cam is not None:
+                try:
+                    cam.release()
+                except Exception:
+                    pass

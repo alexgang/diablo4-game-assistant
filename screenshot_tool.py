@@ -12,7 +12,9 @@
 
 import os
 import sys
+import signal
 import datetime
+import threading
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
@@ -22,6 +24,7 @@ from screen_capture import ScreenCapture
 from config import SDK_CONFIG
 
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), 'game_screenshots')
+
 
 class ScreenshotTool:
     def __init__(self):
@@ -33,17 +36,47 @@ class ScreenshotTool:
             os.makedirs(self.screenshot_dir)
 
         self.capture = ScreenCapture()
+        self._exiting = False
+        self._use_tray = False
 
         self.create_tray_icon()
 
+    def _do_exit(self):
+        if self._exiting:
+            return
+        self._exiting = True
+        print("\n正在退出...")
+
+        if self._use_tray:
+            threading.Thread(target=self._stop_tray, daemon=True).start()
+
+        try:
+            self.root.after(100, self._destroy_root)
+        except Exception:
+            pass
+
+    def _stop_tray(self):
+        try:
+            self.icon.stop()
+        except Exception:
+            pass
+
+    def _destroy_root(self):
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        os._exit(0)
+
     def create_tray_icon(self):
-        """创建系统托盘图标"""
         try:
             import pystray
             from PIL import Image
         except ImportError:
             self.create_simple_gui()
             return
+
+        self._use_tray = True
 
         image = Image.new('RGB', (64, 64), color=(46, 204, 113))
         from PIL import ImageDraw
@@ -57,9 +90,7 @@ class ScreenshotTool:
             elif str(item) == "截图(选择位置)":
                 self.save_screenshot_with_dialog()
             elif str(item) == "退出":
-                icon.stop()
-                self.root.quit()
-                sys.exit(0)
+                self._do_exit()
 
         menu = pystray.Menu(
             pystray.MenuItem("📸 截图", on_click),
@@ -70,27 +101,28 @@ class ScreenshotTool:
         )
 
         self.icon = pystray.Icon("游戏截图", image, "游戏截图工具", menu)
-        
+
         print("=" * 60)
         print("游戏截图工具已启动")
         print("=" * 60)
         print(f"\n截图保存目录: {self.screenshot_dir}")
         print("\n使用方法:")
-        print("  点击托盘图标 -> 选择截图")
-        print("  右键点击 -> 更多选项")
+        print("  右键托盘图标 -> 选择截图")
+        print("  右键托盘图标 -> 退出")
         print("\n按 Ctrl+C 退出程序")
 
     def create_simple_gui(self):
-        """创建简单的 GUI 窗口"""
+        self._use_tray = False
+
         self.window = tk.Toplevel(self.root)
         self.window.title("游戏截图工具")
-        self.window.geometry("300x120")
+        self.window.geometry("300x150")
         self.window.resizable(False, False)
         self.window.attributes("-topmost", True)
 
         try:
             self.window.iconbitmap(default='')
-        except:
+        except Exception:
             pass
 
         label = tk.Label(
@@ -115,13 +147,13 @@ class ScreenshotTool:
             self.window,
             text="❌ 退出",
             font=("微软雅黑", 9),
-            command=self.quit,
+            command=self._do_exit,
             width=20
         )
         btn_quit.pack(pady=5)
 
         self.window.bind('<F12>', lambda e: self.save_screenshot())
-        self.window.protocol('WM_DELETE_WINDOW', lambda: None)
+        self.window.protocol('WM_DELETE_WINDOW', self._do_exit)
 
         print("=" * 60)
         print("游戏截图工具已启动")
@@ -130,7 +162,6 @@ class ScreenshotTool:
         print("\n按 F12 截图 或 点击窗口按钮")
 
     def _capture_game_screen(self):
-        """截取游戏屏幕 - 优先使用 dxcam (支持 DirectX 游戏)"""
         try:
             import dxcam
             import ctypes
@@ -185,7 +216,6 @@ class ScreenshotTool:
         return None
 
     def save_screenshot(self, custom_name=None):
-        """截取屏幕并保存"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         screenshot = self._capture_game_screen()
@@ -211,7 +241,6 @@ class ScreenshotTool:
 
         try:
             import cv2
-            import numpy as np
             from PIL import Image
 
             img_pil = Image.fromarray(cv2.cvtColor(screenshot, cv2.COLOR_BGR2RGB))
@@ -224,7 +253,6 @@ class ScreenshotTool:
             return False
 
     def ask_scene_name(self):
-        """询问场景名称"""
         dialog = tk.Toplevel(self.root)
         dialog.title("保存截图")
         dialog.geometry("400x150")
@@ -267,7 +295,6 @@ class ScreenshotTool:
         return result["name"]
 
     def save_screenshot_with_dialog(self):
-        """截图并询问保存路径"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         screenshot = self._capture_game_screen()
@@ -293,7 +320,6 @@ class ScreenshotTool:
         if save_path:
             try:
                 import cv2
-                import numpy as np
                 from PIL import Image
 
                 img_pil = Image.fromarray(cv2.cvtColor(screenshot, cv2.COLOR_BGR2RGB))
@@ -308,29 +334,21 @@ class ScreenshotTool:
         return False
 
     def run(self):
-        """运行截图工具"""
-        try:
+        signal.signal(signal.SIGINT, lambda sig, frame: self._do_exit())
+
+        if self._use_tray:
             self.icon.run()
-        except:
+        else:
             self.window.mainloop()
 
-    def quit(self):
-        """退出程序"""
-        print("\n正在退出...")
-        try:
-            self.icon.stop()
-        except:
-            pass
-        try:
-            self.window.destroy()
-        except:
-            pass
-        self.root.quit()
-        sys.exit(0)
+        if not self._exiting:
+            self._do_exit()
+
 
 def main():
     tool = ScreenshotTool()
     tool.run()
+
 
 if __name__ == "__main__":
     main()

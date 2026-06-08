@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-游戏状态检测器 - 集成Intel Gaming Assistant SDK
+游戏状态检测器 - 集成OCR + SDK Vision + Knowledge RAG + MMR
 
-功能：
-1. 屏幕捕获 -> SDK Vision识别 -> Knowledge RAG推荐
+完整流程：
+1. 屏幕捕获 → OCR文字提取 → Vision场景识别 → Knowledge RAG查询 → MMR多模态查询
 2. 检测当前任务、BOSS、位置、职业
 3. 提供上下文感知的智能推荐
 4. SDK不可用时回退到本地模拟模式
@@ -14,10 +14,13 @@ import logging
 import os
 import tempfile
 import time
+import ctypes
+from ctypes import wintypes
 
 from screen_capture import ScreenCapture
 from game_data import GameDatabase
 from content_indexer import ContentIndexer
+from ocr_recognizer import GameOCR, GameStateRecognizer
 from sdk_client import GamingAssistantSDK
 from config import SDK_CONFIG
 
@@ -25,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class GameDetector:
-    """游戏状态检测器 - 集成Intel Gaming Assistant SDK"""
+    """游戏状态检测器 - 集成OCR + SDK Vision + Knowledge RAG + MMR"""
 
     def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None):
         self.screen_capture = ScreenCapture()
@@ -43,6 +46,23 @@ class GameDetector:
                     web_data = json.load(f)
 
         self.indexer = ContentIndexer(game_db=self.game_db, web_data=web_data)
+
+        self.ocr = None
+        self.ocr_available = False
+        if use_ocr:
+            try:
+                self.ocr = GameOCR(engine=ocr_engine)
+                self.ocr_available = self.ocr.available
+                if self.ocr_available:
+                    logger.info(f"OCR引擎已启用: {self.ocr.engine_name}")
+                else:
+                    logger.warning("OCR引擎不可用，将使用模拟模式")
+            except Exception as e:
+                logger.warning(f"OCR初始化失败: {e}，将使用模拟模式")
+                self.ocr = None
+                self.ocr_available = False
+
+        self.state_recognizer = GameStateRecognizer(ocr_engine=ocr_engine) if use_ocr else None
 
         self.instance_id = SDK_CONFIG['instance_id']
         self.knowledge_id = SDK_CONFIG['knowledge']['knowledge_id']
@@ -64,44 +84,125 @@ class GameDetector:
         self.last_ocr_time = 0
         self.ocr_cache_ttl = 2.0
 
+        self._cached_img = None
+        self._cached_tmp_path = None
+        self._cache_timestamp = 0
+        self._cache_ttl = 1.0
+
+    def _capture_screen(self):
+        """捕获屏幕并缓存，避免同一分析周期内重复截屏"""
+        now = time.time()
+        if self._cached_img is not None and (now - self._cache_timestamp) < self._cache_ttl:
+            return self._cached_img
+
+        if not self.screen_capture.game_hwnd:
+            self._try_reconnect_game()
+
+        self._cached_img = self.screen_capture.capture_full_screen()
+        self._cache_timestamp = now
+        self._cleanup_temp_file()
+        return self._cached_img
+
+    def _try_reconnect_game(self):
+        """尝试重新查找游戏窗口"""
+        game_names = ["暗黑破坏神IV", "Diablo IV", "Diablo IV (Direct3D 11)"]
+        for name in game_names:
+            hwnd = ctypes.windll.user32.FindWindowW(None, name)
+            if hwnd:
+                logger.info(f"重新找到游戏窗口: {name} (hwnd={hwnd})")
+                self.screen_capture.game_hwnd = hwnd
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                self.screen_capture._game_rect = (rect.left, rect.top, rect.right, rect.bottom)
+                return True
+        return False
+
+    def _get_temp_image_path(self):
+        """获取截图的临时文件路径（缓存），供SDK Vision/MMR使用"""
+        if self._cached_tmp_path and os.path.exists(self._cached_tmp_path):
+            return self._cached_tmp_path
+        img = self._capture_screen()
+        try:
+            import cv2
+            tmp_path = os.path.join(
+                tempfile.gettempdir(),
+                f'_game_detect_{os.getpid()}_{int(time.time())}.png',
+            )
+            cv2.imwrite(tmp_path, img)
+            self._cached_tmp_path = tmp_path
+            return tmp_path
+        except Exception as e:
+            logger.error(f"保存临时截图失败: {e}")
+            return None
+
+    def _cleanup_temp_file(self):
+        """清理临时截图文件"""
+        if self._cached_tmp_path and os.path.exists(self._cached_tmp_path):
+            try:
+                os.unlink(self._cached_tmp_path)
+            except Exception:
+                pass
+        self._cached_tmp_path = None
+
+    def invalidate_cache(self):
+        """手动使能缓存失效（新分析周期开始时调用）"""
+        self._cached_img = None
+        self._cache_timestamp = 0
+        self._cleanup_temp_file()
+
+    def _extract_ocr_text(self, img):
+        """使用OCR从截图提取文字"""
+        if self.ocr and self.ocr_available:
+            for preprocess in ['auto', 'dark', 'high_contrast']:
+                try:
+                    text = self.ocr.extract_text(img, preprocess=preprocess)
+                    text = GameOCR.postprocess_text(text)
+                    if text.strip():
+                        return text
+                except Exception as e:
+                    logger.debug(f"OCR提取失败({preprocess}): {e}")
+
+        if self.state_recognizer:
+            try:
+                result = self.state_recognizer.analyze_image_full(img)
+                text = result.get('raw_text', '')
+                if text.strip():
+                    return text
+            except Exception as e:
+                logger.debug(f"GameStateRecognizer提取失败: {e}")
+
+        return ''
+
+    def _recognize_scene(self, tmp_path):
+        """使用SDK Vision识别场景上下文（返回场景信息，非文字）"""
+        if not self.sdk_available:
+            return []
+        try:
+            vision_results = self.sdk.vision_query(
+                self.instance_id,
+                tmp_path,
+                topk=SDK_CONFIG['vision']['topk'],
+                mode=SDK_CONFIG['vision']['mode'],
+            )
+            return vision_results or []
+        except Exception as e:
+            logger.error(f"Vision场景识别失败: {e}")
+            return []
+
     def get_screen_text(self):
         """
-        获取当前屏幕文字 - 优先使用SDK Vision，回退到模拟模式
+        获取当前屏幕文字 - 使用OCR提取真实文字，回退到模拟模式
 
         Returns:
             str: 识别出的屏幕文字
         """
-        if self.sdk_available:
-            try:
-                img = self.screen_capture.capture_full_screen()
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp_path = tmp.name
-                try:
-                    import cv2
-                    cv2.imwrite(tmp_path, img)
-                    vision_results = self.sdk.vision_query(
-                        self.instance_id,
-                        tmp_path,
-                        topk=SDK_CONFIG['vision']['topk'],
-                        mode=SDK_CONFIG['vision']['mode'],
-                    )
-                    if vision_results:
-                        scene_parts = []
-                        for vr in vision_results:
-                            scene_id = vr.get('scene_id', '')
-                            picture_id = vr.get('picture_id', '')
-                            score = vr.get('score', 0)
-                            scene_parts.append(f"场景:{scene_id} 画面:{picture_id} 置信度:{score:.2f}")
-                        text = '; '.join(scene_parts)
-                        if text.strip():
-                            self.last_ocr_text = text
-                            self.last_ocr_time = time.time()
-                            return text
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-            except Exception as e:
-                logger.error(f"SDK Vision识别失败: {e}")
+        img = self._capture_screen()
+
+        ocr_text = self._extract_ocr_text(img)
+        if ocr_text.strip():
+            self.last_ocr_text = ocr_text
+            self.last_ocr_time = time.time()
+            return ocr_text
 
         return self._get_simulation_text()
 
@@ -175,9 +276,10 @@ class GameDetector:
 
     def detect_quest(self):
         """检测当前任务"""
+        screen_text = self.get_screen_text()
+
         if self.sdk_available:
             try:
-                screen_text = self.get_screen_text()
                 answer = self.sdk.knowledge_query(
                     self.instance_id,
                     f"当前任务指引: {screen_text}",
@@ -192,7 +294,6 @@ class GameDetector:
             except Exception as e:
                 logger.error(f"SDK任务查询失败，回退本地: {e}")
 
-        screen_text = self.get_screen_text()
         recommendations = self.detect_from_screen_text(screen_text)
 
         if recommendations['quest_hints']:
@@ -206,9 +307,10 @@ class GameDetector:
 
     def detect_boss(self):
         """检测BOSS"""
+        screen_text = self.get_screen_text()
+
         if self.sdk_available:
             try:
-                screen_text = self.get_screen_text()
                 answer = self.sdk.knowledge_query(
                     self.instance_id,
                     f"BOSS攻略: {screen_text}",
@@ -224,7 +326,6 @@ class GameDetector:
             except Exception as e:
                 logger.error(f"SDK BOSS查询失败，回退本地: {e}")
 
-        screen_text = self.get_screen_text()
         recommendations = self.detect_from_screen_text(screen_text)
 
         if recommendations['boss_tips']:
@@ -238,31 +339,30 @@ class GameDetector:
         return None
 
     def detect_location(self):
-        """检测当前位置"""
+        """检测当前位置 - 优先Vision场景匹配，回退到OCR+颜色分析"""
         if self.sdk_available:
             try:
-                img = self.screen_capture.capture_full_screen()
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                    tmp_path = tmp.name
-                try:
-                    import cv2
-                    cv2.imwrite(tmp_path, img)
-                    vision_results = self.sdk.vision_query(
-                        self.instance_id,
-                        tmp_path,
-                        topk=1,
-                        mode=SDK_CONFIG['vision']['mode'],
-                    )
+                tmp_path = self._get_temp_image_path()
+                if tmp_path:
+                    vision_results = self._recognize_scene(tmp_path)
                     if vision_results:
                         scene_id = vision_results[0].get('scene_id', '')
                         if scene_id:
                             self.current_location = scene_id
                             return self.current_location
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
             except Exception as e:
                 logger.error(f"SDK位置识别失败，回退本地: {e}")
+
+        img = self._capture_screen()
+
+        if self.ocr and self.ocr_available:
+            try:
+                location_text = self.ocr.extract_location_text(img)
+                if location_text.strip():
+                    self.current_location = location_text
+                    return self.current_location
+            except Exception as e:
+                logger.error(f"OCR位置识别失败: {e}")
 
         try:
             import cv2
@@ -316,31 +416,48 @@ class GameDetector:
 
         guide['location'] = self.current_location or '未知'
         guide['ocr_text'] = self.last_ocr_text
-        guide['ocr_engine'] = 'sdk' if self.sdk_available else 'simulation'
+        guide['ocr_engine'] = self._get_engine_label()
 
         return guide
 
     def analyze_game_state(self):
         """分析游戏状态"""
-        screen_text = self.get_screen_text()
+        self.invalidate_cache()
+
+        img = self._capture_screen()
+        ocr_text = self._extract_ocr_text(img)
+        if not ocr_text.strip():
+            ocr_text = self._get_simulation_text()
+
+        self.last_ocr_text = ocr_text
+        self.last_ocr_time = time.time()
 
         if self.sdk_available:
-            recommendations = self._analyze_with_sdk(screen_text)
+            recommendations = self._analyze_with_sdk(ocr_text)
         else:
-            recommendations = self.detect_from_screen_text(screen_text)
+            recommendations = self.detect_from_screen_text(ocr_text)
 
         result = {
             'status': 'analyzing',
-            'screen_text': screen_text,
+            'screen_text': ocr_text,
             'recommendations': recommendations,
             'formatted': self.indexer.format_recommendations(recommendations),
-            'ocr_engine': 'sdk' if self.sdk_available else 'simulation',
+            'ocr_engine': self._get_engine_label(),
         }
 
         return result
 
-    def _analyze_with_sdk(self, screen_text):
-        """使用SDK进行完整分析"""
+    def _analyze_with_sdk(self, ocr_text):
+        """
+        使用SDK进行完整分析 - OCR文字 + Vision场景 + Knowledge RAG + MMR
+
+        流程：
+        1. OCR文字已由调用方提供 (ocr_text)
+        2. Vision场景识别 → 提供场景上下文
+        3. Knowledge RAG查询 → 基于OCR文字+场景上下文
+        4. MMR多模态查询 → 图文联合检索
+        5. 合并所有结果 + 本地推荐补充
+        """
         recommendations = {
             'quest_hints': [],
             'boss_tips': [],
@@ -352,39 +469,37 @@ class GameDetector:
             'build_details': [],
         }
 
-        img = self.screen_capture.capture_full_screen()
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                tmp_path = tmp.name
-            import cv2
-            cv2.imwrite(tmp_path, img)
+        scene_context = ''
+        tmp_path = self._get_temp_image_path()
 
+        if tmp_path:
             try:
-                vision_results = self.sdk.vision_query(
-                    self.instance_id,
-                    tmp_path,
-                    topk=SDK_CONFIG['vision']['topk'],
-                    mode=SDK_CONFIG['vision']['mode'],
-                )
+                vision_results = self._recognize_scene(tmp_path)
                 if vision_results:
+                    scene_parts = []
                     for vr in vision_results:
                         scene_id = vr.get('scene_id', '')
+                        picture_id = vr.get('picture_id', '')
                         score = vr.get('score', 0)
+                        scene_parts.append(f"场景:{scene_id}(画面:{picture_id}, 置信度:{score:.2f})")
                         recommendations['quest_hints'].append({
                             'name': f"场景: {scene_id}",
-                            'location': '',
-                            'guide': f"Vision匹配 (置信度: {score:.2f})",
+                            'location': picture_id,
+                            'guide': f"Vision场景匹配 (置信度: {score:.2f})",
                             'act': 'Vision',
                             'relevance': score,
                         })
+                    scene_context = '; '.join(scene_parts)
             except Exception as e:
                 logger.error(f"Vision查询失败: {e}")
 
             try:
+                query_text = ocr_text
+                if scene_context:
+                    query_text = f"{ocr_text} [{scene_context}]"
                 knowledge_answer = self.sdk.knowledge_query(
                     self.instance_id,
-                    f"游戏画面内容: {screen_text}，请给出任务指引和BOSS攻略",
+                    f"游戏画面内容: {query_text}，请给出任务指引和BOSS攻略",
                     knowledge_id=self.knowledge_id,
                 )
                 if knowledge_answer and knowledge_answer.strip():
@@ -401,7 +516,7 @@ class GameDetector:
             try:
                 mmr_results = self.sdk.mmr_query(
                     self.instance_id,
-                    text=screen_text,
+                    text=ocr_text,
                     image_path=tmp_path,
                     topk=SDK_CONFIG['mmr']['topk'],
                     threshold=SDK_CONFIG['mmr']['threshold'],
@@ -418,15 +533,9 @@ class GameDetector:
                         entry['guide'] = info
                     recommendations['build_guides'].append(entry)
             except Exception as e:
-                logger.error(f"MMR查询失败: {e}")
+                logger.debug(f"MMR查询失败: {e}")
 
-        except Exception as e:
-            logger.error(f"SDK分析过程失败: {e}")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
-        local_recs = self.indexer.get_context_recommendations(screen_text)
+        local_recs = self.indexer.get_context_recommendations(ocr_text)
         for key in recommendations:
             if not recommendations[key]:
                 recommendations[key] = local_recs.get(key, [])
@@ -436,9 +545,122 @@ class GameDetector:
 
     def capture_and_analyze(self):
         """捕获并分析当前画面"""
-        img = self.screen_capture.capture_full_screen()
+        self.invalidate_cache()
+        img = self._capture_screen()
         analysis = self.analyze_game_state()
         return img, analysis
+
+    def capture_and_query(self, query=None):
+        """
+        主入口：捕获屏幕 → OCR提取文字 → Vision场景识别 → Knowledge RAG → MMR → 合并结果
+
+        Args:
+            query: 可选的额外查询文本，会与OCR文字合并
+
+        Returns:
+            dict: 包含完整分析结果的字典
+        """
+        self.invalidate_cache()
+
+        img = self._capture_screen()
+
+        ocr_text = self._extract_ocr_text(img)
+        if not ocr_text.strip():
+            ocr_text = self._get_simulation_text()
+
+        self.last_ocr_text = ocr_text
+        self.last_ocr_time = time.time()
+
+        combined_text = ocr_text
+        if query and query.strip():
+            combined_text = f"{ocr_text} {query.strip()}"
+
+        scene_info = []
+        tmp_path = self._get_temp_image_path()
+        if tmp_path and self.sdk_available:
+            scene_info = self._recognize_scene(tmp_path)
+
+        scene_context = ''
+        if scene_info:
+            scene_parts = []
+            for vr in scene_info:
+                scene_id = vr.get('scene_id', '')
+                picture_id = vr.get('picture_id', '')
+                score = vr.get('score', 0)
+                scene_parts.append({
+                    'scene_id': scene_id,
+                    'picture_id': picture_id,
+                    'score': score,
+                })
+            scene_context = '; '.join(
+                f"场景:{s['scene_id']}(置信度:{s['score']:.2f})" for s in scene_parts
+            )
+
+        knowledge_answer = ''
+        if self.sdk_available:
+            try:
+                rag_query = combined_text
+                if scene_context:
+                    rag_query = f"{combined_text} [场景: {scene_context}]"
+                knowledge_answer = self.sdk.knowledge_query(
+                    self.instance_id,
+                    rag_query,
+                    knowledge_id=self.knowledge_id,
+                )
+            except Exception as e:
+                logger.error(f"Knowledge查询失败: {e}")
+
+        mmr_results = []
+        if self.sdk_available and tmp_path:
+            try:
+                mmr_results = self.sdk.mmr_query(
+                    self.instance_id,
+                    text=combined_text,
+                    image_path=tmp_path,
+                    topk=SDK_CONFIG['mmr']['topk'],
+                    threshold=SDK_CONFIG['mmr']['threshold'],
+                )
+            except Exception as e:
+                logger.debug(f"MMR查询失败: {e}")
+
+        local_recs = self.indexer.get_context_recommendations(combined_text)
+        self._update_state_from_recommendations(local_recs)
+
+        result = {
+            'status': 'complete',
+            'ocr_text': ocr_text,
+            'scene_info': scene_info,
+            'scene_context': scene_context,
+            'knowledge_answer': knowledge_answer.strip() if knowledge_answer else '',
+            'mmr_results': mmr_results,
+            'recommendations': local_recs,
+            'formatted': self.indexer.format_recommendations(local_recs),
+            'ocr_engine': self._get_engine_label(),
+            'location': self.current_location or '未知',
+        }
+
+        if knowledge_answer and knowledge_answer.strip():
+            result['recommendations']['quest_hints'].insert(0, {
+                'name': 'Knowledge推荐',
+                'location': '',
+                'guide': knowledge_answer.strip(),
+                'act': 'RAG',
+                'relevance': 1.0,
+            })
+
+        for mr in (mmr_results or []):
+            score = mr.get('score', 0)
+            text = mr.get('text', '')
+            info = mr.get('info', '')
+            entry = {
+                'name': text[:50] if text else 'MMR匹配',
+                'relevance': score,
+            }
+            if info:
+                entry['guide'] = info
+            result['recommendations']['build_guides'].append(entry)
+
+        return result
 
     def search(self, query, top_n=5):
         """搜索游戏数据"""
@@ -487,8 +709,18 @@ class GameDetector:
 
         return self.indexer.search(query, top_n=top_n)
 
+    def _get_engine_label(self):
+        """获取当前引擎标签"""
+        if self.sdk_available and self.ocr_available:
+            return f"sdk+ocr({self.ocr.engine_name})"
+        elif self.sdk_available:
+            return 'sdk'
+        elif self.ocr_available:
+            return f"ocr({self.ocr.engine_name})"
+        return 'simulation'
+
     def _get_simulation_text(self):
-        """模拟获取屏幕文字（SDK不可用时的回退方案）"""
+        """模拟获取屏幕文字（OCR和SDK均不可用时的回退方案）"""
         import random
         simulation_texts = [
             "弗列斯泰克 严寒中的希望",

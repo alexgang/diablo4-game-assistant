@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+from game_data import GameDatabase
+from content_indexer import ContentIndexer
+import json
+import os
+
+db = GameDatabase()
+
+web_data_path = os.path.join(os.path.dirname(__file__), 'cache', 'web_data.json')
+if os.path.exists(web_data_path):
+    with open(web_data_path, 'r', encoding='utf-8') as f:
+        web_data = json.load(f)
+    print(f'已加载网站数据: {len(web_data.get("guides", []))} 攻略, '
+          f'{len(web_data.get("equipment", []))} 装备, '
+          f'{len(web_data.get("skills", []))} 技能, '
+          f'{len(web_data.get("build_details", []))} 构筑详情')
+    indexer = ContentIndexer(game_db=db, web_data=web_data)
+else:
+    print('未找到网站数据缓存')
+    indexer = ContentIndexer(game_db=db)
+
+query = '游侠升级攻略'
+print('\n' + '=' * 60)
+print(f'搜索关键词: {query}')
+print('=' * 60)
+
+results = indexer.search(query, top_n=15)
+print(f'\n找到 {len(results)} 条结果:\n')
+
+for i, r in enumerate(results, 1):
+    cat = r['category']
+    score = r['score']
+    data = r['data']
+
+    print(f'{i}. [{cat}] 相关度: {score:.1%}')
+
+    if cat == 'quests':
+        print(f'   任务: {data.get("name", "")}')
+        print(f'   地点: {data.get("location", "")}')
+        print(f'   攻略: {data.get("guide", "")}')
+    elif cat == 'bosses':
+        print(f'   BOSS: {data.get("name", "")}')
+        print(f'   弱点: {data.get("weakness", [])}')
+        print(f'   攻略: {data.get("guide", "")}')
+    elif cat == 'skills':
+        print(f'   职业: {data.get("name", "")}')
+        builds = data.get("builds", {})
+        for build_name, skills in builds.items():
+            print(f'   构筑: {build_name} -> {skills}')
+    elif cat == 'items':
+        print(f'   物品: {data.get("name", "")}')
+        print(f'   类型: {data.get("type", "")}')
+    elif cat == 'guides':
+        print(f'   攻略: {data.get("title", "")}')
+        if 'author' in data:
+            print(f'   作者: {data.get("author", "")}')
+    elif cat == 'equipment':
+        print(f'   装备: {data.get("name", "")}')
+        print(f'   品质: {data.get("rarity", "")}')
+        print(f'   类型: {data.get("type", "")}')
+    elif cat == 'web_skills':
+        print(f'   技能: {data.get("name", "")}')
+        print(f'   职业: {data.get("class", "")}')
+    elif cat == 'build_details':
+        print(f'   构筑: {data.get("title", "")}')
+        if 'author' in data:
+            print(f'   作者: {data.get("author", "")}')
+        if 'skills' in data:
+            print(f'   技能: {data.get("skills", [])}')
+        if 'core_gear' in data:
+            print(f'   核心装备: {data.get("core_gear", [])}')
+        if 'legendary_powers' in data:
+            print(f'   威能: {data.get("legendary_powers", [])}')
+
+    print()
+
+print('\n--- 上下文推荐结果 ---')
+recommendations = indexer.get_context_recommendations(query)
+print(indexer.format_recommendations(recommendations))

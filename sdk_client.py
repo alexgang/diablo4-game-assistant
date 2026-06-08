@@ -209,9 +209,9 @@ class GamingAssistantSDK:
         """Query the Knowledge index; returns concatenated answer string."""
         body: Dict[str, Any] = {"text": text}
         if knowledge_id is not None:
-            body["knowledge_id"] = knowledge_id
+            body["knowledge_id"] = [knowledge_id] if isinstance(knowledge_id, str) else knowledge_id
         if scenes_name is not None:
-            body["scenes_name"] = scenes_name
+            body["scenes_name"] = [scenes_name] if isinstance(scenes_name, str) else scenes_name
         chunks = self._stream_sse(f"/knowledge/service/query/{instance_id}", body)
         parts = []
         for chunk in chunks:

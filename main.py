@@ -23,9 +23,15 @@
 
 import sys
 import os
+import io
 import logging
 import subprocess
 import time
+
+if sys.stdout and hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from config import SDK_CONFIG, SDK_SERVER_PATH, SDK_SERVER_WORK_DIR
 
@@ -103,6 +109,8 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
     """GUI模式"""
     try:
         from gui import MainWindow
+        from scene_assistant_window import SceneAssistantWindow
+        from game_detector import GameDetector
         from PyQt5.QtWidgets import QApplication
 
         sdk_url = SDK_CONFIG['server_url']
@@ -118,6 +126,16 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
             tts_engine=tts_engine,
         )
         window.show()
+
+        scene_window = None
+        try:
+            detector = GameDetector(use_ocr=True, ocr_engine=ocr_engine)
+            scene_window = SceneAssistantWindow(detector)
+            scene_window.show()
+            print("🎮 场景助手窗口已启动 (基于 Vision 5秒/次自动识别)")
+        except Exception as e:
+            print(f"场景助手窗口启动失败: {e}")
+
         print("游戏助手已启动！")
         sys.exit(app.exec_())
 
