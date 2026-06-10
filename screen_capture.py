@@ -132,7 +132,7 @@ class ScreenCapture:
                             best_frame = frame
                     else:
                         camera.release()
-                except (ValueError, IndexError, Exception) as e:
+                except Exception as e:
                     logger.debug(f"dxcam output={out_idx} 失败: {e}")
 
             if best_unique > 10 and best_camera is not None:

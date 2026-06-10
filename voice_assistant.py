@@ -41,7 +41,11 @@ try:
 except ImportError:
     pass
 
-WHISPER_AVAILABLE = True
+try:
+    import importlib.util
+    WHISPER_AVAILABLE = importlib.util.find_spec("whisper") is not None
+except ImportError:
+    WHISPER_AVAILABLE = False
 
 try:
     import pyttsx3
