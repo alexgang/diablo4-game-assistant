@@ -8,9 +8,21 @@ D4 职业推荐数据模块
 - 天赋加点图
 - 巅峰加点图
 """
+import os
 from enum import Enum
 from typing import Dict, List
 from dataclasses import dataclass, field
+
+# 构筑截图目录(由 fetch_build_images.py 产出)
+_BUILD_IMG_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'resources', 'images', 'builds',
+)
+
+
+def _img(name: str) -> str:
+    """构筑图相对名 → 绝对路径(文件不存在也返回路径,GUI 自行判断)"""
+    return os.path.join(_BUILD_IMG_DIR, name)
 
 
 class D4Class(str, Enum):
@@ -69,26 +81,32 @@ CLASS_OCR_KEYWORDS: Dict[D4Class, List[str]] = {
     D4Class.BARBARIAN: [
         '野蛮人', 'barbarian', 'barb', 'bb',
         '撼地者', 'berserker', '先祖之锤', '先祖', '双持', '尘魔',
+        '旋风斩', '旋风', 'whirlwind', '猛击', 'bash',  # S13
     ],
     D4Class.ROGUE: [
         '游侠', 'rogue', 'rog',
         '刀锋', 'bladeshift', '穿刺', '箭雨', '穿透', '陷阱', '奇袭',
+        '飞刀乱舞', '飞刀', 'dance of knives', '速射', 'rapid fire',  # S13
     ],
     D4Class.SORCERER: [
         '法师', '术士', 'warlock', 'sorcerer', 'sorc', 'sor',
         '冰法', '电法', '火法', '冰霜', '闪电', '燃烧', '电球',
+        '球状闪电', '球闪', 'ball lightning', '冰晶碎片', 'ice shards',  # S13
     ],
     D4Class.DRUID: [
         '德鲁伊', 'druid',
         '狼人', '熊人', '风暴', '土狼', '伙伴', '大地',
+        '同伴', 'companion', '山崩', 'landslide',  # S13
     ],
     D4Class.NECROMANCER: [
         '死灵', 'necromancer', 'necro', 'nec',
         '骷髅', '召唤', '亡者之书', '傀儡', '骨矛', '血雾', '钢铁',
+        '血潮', '血浪', 'blood wave', '血涌', 'blood surge',  # S13
     ],
     D4Class.SPIRITBORN: [
         '灵巫', 'spiritborn',
         '虎掌', '鹰爪', '神龙', '朱鹤', '千喉',
+        '闪避', 'evade', '反击', 'counterswarm', '尖刺齐射', 'quill volley',  # S13
     ],
 }
 
@@ -109,102 +127,80 @@ class ClassBuildGuide:
     # }
 
 
-# 默认推荐 BD 配置（来自 3DM/灰机/MAXROLL 等社区资源）
+# 默认推荐 BD 配置（Season 13 "Season of Reckoning"，来源 maxroll/d2core）
+# image_paths 指向 fetch_build_images.py 截好的本地图;文件不在时 GUI 显示占位提示。
 DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
     D4Class.BARBARIAN: [
         ClassBuildGuide(
             class_type=D4Class.BARBARIAN,
-            build_name='双持先祖之锤',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.BARBARIAN,
-            build_name='地震冲锋',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='旋风斩野蛮人',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/whirlwind-barbarian-guide',
+            image_paths={
+                'skills': _img('barb_ww_skills.png'),
+                'paragon': _img('barb_ww_paragon.png'),
+            },
         ),
     ],
     D4Class.ROGUE: [
         ClassBuildGuide(
             class_type=D4Class.ROGUE,
-            build_name='穿刺刀锋',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.ROGUE,
-            build_name='速射弓',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='飞刀乱舞游侠',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/dance-of-knives-rogue-guide',
+            image_paths={
+                'skills': _img('rogue_dok_skills.png'),
+                'paragon': _img('rogue_dok_paragon.png'),
+                'gear': _img('rogue_dok_gear.png'),
+            },
         ),
     ],
     D4Class.SORCERER: [
         ClassBuildGuide(
             class_type=D4Class.SORCERER,
-            build_name='冰霜新星',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.SORCERER,
-            build_name='电法连锁闪电',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='球状闪电法师',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/ball-lightning-sorcerer-guide',
+            image_paths={
+                'skills': _img('sorc_bl_skills.png'),
+                'paragon': _img('sorc_bl_paragon.png'),
+            },
         ),
     ],
     D4Class.DRUID: [
         ClassBuildGuide(
             class_type=D4Class.DRUID,
-            build_name='风暴狼',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.DRUID,
-            build_name='大地熊',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='同伴德鲁伊',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/companion-druid-guide',
+            image_paths={
+                'skills': _img('druid_comp_skills.png'),
+                'paragon': _img('druid_comp_paragon.png'),
+            },
         ),
     ],
     D4Class.NECROMANCER: [
         ClassBuildGuide(
             class_type=D4Class.NECROMANCER,
-            build_name='钢铁傀儡',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/329004.html',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.NECROMANCER,
-            build_name='傀儡流',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/330348.html',
-            image_paths={},
-        ),
-        ClassBuildGuide(
-            class_type=D4Class.NECROMANCER,
-            build_name='骨矛',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='血潮死灵',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/blood-wave-necromancer-guide',
+            image_paths={
+                'skills': _img('necro_bw_skills.png'),
+                'paragon': _img('necro_bw_paragon.png'),
+            },
         ),
     ],
     D4Class.SPIRITBORN: [
         ClassBuildGuide(
             class_type=D4Class.SPIRITBORN,
-            build_name='虎掌猛击',
-            season='S11',
-            source_url='https://m.3dmgame.com/ol/gl/diablo4/',
-            image_paths={},
+            build_name='闪避反击灵巫',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/evade-spiritborn-guide',
+            image_paths={
+                'skills': _img('spirit_evade_skills.png'),
+                'paragon': _img('spirit_evade_paragon.png'),
+            },
         ),
     ],
 }
