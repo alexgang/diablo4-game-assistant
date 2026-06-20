@@ -99,7 +99,7 @@ CLASS_OCR_KEYWORDS: Dict[D4Class, List[str]] = {
         '同伴', 'companion', '山崩', 'landslide',  # S13
     ],
     D4Class.NECROMANCER: [
-        '死灵', 'necromancer', 'necro', 'nec',
+        '死灵法师', '死灵', 'necromancer', 'necro', 'nec',  # 死灵法师(4字)须先于法师(2字)命中
         '骷髅', '召唤', '亡者之书', '傀儡', '骨矛', '血雾', '钢铁',
         '血潮', '血浪', 'blood wave', '血涌', 'blood surge',  # S13
     ],
