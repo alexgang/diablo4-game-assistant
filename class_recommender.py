@@ -111,6 +111,39 @@ CLASS_OCR_KEYWORDS: Dict[D4Class, List[str]] = {
 }
 
 
+# ============== 角色名 → 职业 映射（本机实际角色，最可靠的识别依据） ==============
+# 来自角色选择界面。OCR 读到角色名即可直接定职业,无需图标/属性。
+# 注意:可能有重名(如两个角色同名但不同职业),重名时此表给主用职业,
+#       需配合图标模板或主属性消歧。维护时按实际角色更新。
+CHARACTER_NAME_TO_CLASS: Dict[str, D4Class] = {
+    '芝麻莱妮雅': D4Class.BARBARIAN,
+    '芝麻苏玛雅': D4Class.ROGUE,
+    '芝麻冬瓜': D4Class.SORCERER,
+    # '芝麻老狼' 重名:既有死灵也有德鲁伊 —— 见 AMBIGUOUS_NAMES,需消歧
+}
+
+# 重名角色:同名对应多个职业,需用图标/主属性进一步区分
+AMBIGUOUS_CHARACTER_NAMES: Dict[str, List[D4Class]] = {
+    '芝麻老狼': [D4Class.NECROMANCER, D4Class.DRUID],
+}
+
+
+def detect_class_from_character_name(text: str):
+    """从 OCR 文本中匹配已知角色名 → 职业。
+    返回 (D4Class, ambiguous: bool)。未命中返回 (None, False)。
+    ambiguous=True 表示命中重名角色,调用方需用图标/属性进一步消歧。"""
+    if not text:
+        return None, False
+    # 先查重名(更具体)
+    for name, classes in AMBIGUOUS_CHARACTER_NAMES.items():
+        if name in text:
+            return classes[0], True   # 返回首选职业 + 标记需消歧
+    for name, cls in CHARACTER_NAME_TO_CLASS.items():
+        if name in text:
+            return cls, False
+    return None, False
+
+
 @dataclass
 class ClassBuildGuide:
     """职业 BD 推荐攻略"""
