@@ -20,9 +20,16 @@ d2core / maxroll 的技能树/巅峰盘/装备图都是 JS 懒加载,无法静�
 配置:编辑 builds_config.py 里每个构筑的 url 和截图区域选择器。
 """
 import argparse
+import io
 import os
 import sys
 import time
+
+# SSH/重定向环境下 stdout 可能是 cp1252,强制 UTF-8 避免中文 print 崩溃
+if sys.stdout and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "resources", "images", "builds")
