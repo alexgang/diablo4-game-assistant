@@ -12,19 +12,25 @@
 """
 
 import sys
+import os
 import logging
 import ctypes
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QFrame, QScrollArea, QLineEdit,
-    QTabWidget, QCheckBox,
+    QTabWidget, QCheckBox, QComboBox, QGridLayout, QMessageBox,
 )
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 
 from game_detector import GameDetector
 from scene_classifier import SceneCategory, classify_scene, get_category_display_name, get_category_color
+from class_recommender import (
+    D4Class, CLASS_NAMES, detect_class_from_text,
+    get_class_display_name, get_class_color, get_class_icon,
+    DEFAULT_BUILDS,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -101,131 +107,59 @@ except ImportError:
 
 
 class SceneVisionWorker(QThread):
-    """后台 Vision 场景识别线程 - 5秒/次"""
+    """后台 Vision 场景识别定时器线程
+
+    关键设计：**本线程只做 5 秒一次的定时通知，不碰 dxcam、不碰截图**
+    实际的截图+Vision 查询放在主线程的 _do_scene_detect() 里执行。
+    这样可以保证 dxcam 实例只在主线程被一个消费者使用，彻底避免多实例冲突导致的死机。
+    """
+    # 请求主线程执行一次场景检测
+    request_detect = pyqtSignal()
+    # 场景识别结果（由主线程发出，但这里也保留一个信号以便外部使用）
     scene_detected = pyqtSignal(dict)
 
-    def __init__(self, game_detector, interval=5.0):
+    def __init__(self, interval=5.0):
         super().__init__()
-        self.detector = game_detector
         self.interval = interval
         self._running = True
 
     def run(self):
+        # 先 sleep 3 秒让 GUI+主程序完全初始化完成
+        self.msleep(3000)
+        logger.info("SceneVisionWorker 启动 (只做定时通知)")
+        cycle = 0
         while self._running:
-            try:
-                result = self._detect_scene()
-                if result:
-                    self.scene_detected.emit(result)
-            except Exception as e:
-                logger.error(f"Vision 场景识别失败: {e}")
+            cycle += 1
+            # 只发一个信号，通知主线程去做实际的检测
+            logger.info(f"[Vision-Timer #{cycle}] 触发主线程检测")
+            self.request_detect.emit()
+            # 等待 interval 秒（可响应 stop）
             for _ in range(int(self.interval * 10)):
                 if not self._running:
                     return
                 self.msleep(100)
 
-    def _detect_scene(self):
-        """检测当前场景"""
-        if not self.detector or not self.detector.sdk_available:
-            return None
-        try:
-            tmp_path = self._get_temp_image_path()
-            if not tmp_path:
-                return None
-            results = self.detector.sdk.vision_query(
-                self.detector.instance_id,
-                tmp_path,
-                topk=5,
-                mode='basic',
-            )
-            if not results:
-                results = self.detector.sdk.vision_query(
-                    self.detector.instance_id,
-                    tmp_path,
-                    topk=5,
-                    mode='accurate',
-                )
-            if not results:
-                return None
-            for top in results:
-                scene_id = top.get('scene_id', '')
-                score = top.get('score', 0)
-                if score >= 0.3:
-                    picture_id = top.get('picture_id', '')
-                    category = classify_scene(scene_id)
-                    return {
-                        'scene_id': scene_id,
-                        'picture_id': picture_id,
-                        'score': score,
-                        'category': category,
-                    }
-            return None
-        except Exception as e:
-            logger.error(f"Vision 查询失败: {e}")
-            return None
-
-    def _get_temp_image_path(self):
-        """截取当前游戏画面并保存到临时文件"""
-        try:
-            import dxcam
-            import cv2
-            import ctypes
-            from ctypes import wintypes
-            import os
-
-            game_names = ['暗黑破坏神IV', 'Diablo IV']
-            hwnd = None
-            for name in game_names:
-                hwnd = ctypes.windll.user32.FindWindowW(None, name)
-                if hwnd:
-                    break
-
-            if hwnd:
-                rect = wintypes.RECT()
-                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                cx = (rect.left + rect.right) // 2
-                cy = (rect.top + rect.bottom) // 2
-
-                import mss
-                region = None
-                with mss.MSS() as sct:
-                    for i, mon in enumerate(sct.monitors[1:], 1):
-                        if mon['left'] <= cx < mon['left'] + mon['width']:
-                            region = (mon['left'], mon['top'], mon['width'], mon['height'])
-                            break
-
-                for out_idx in range(4):
-                    try:
-                        if region:
-                            camera = dxcam.create(device_idx=0, output_idx=out_idx,
-                                                  region=region, output_color="BGR")
-                        else:
-                            camera = dxcam.create(device_idx=0, output_idx=out_idx,
-                                                  output_color="BGR")
-                        frame = camera.grab()
-                        camera.release()
-                        if frame is not None and frame.size > 0 and frame.mean() > 1:
-                            break
-                    except Exception:
-                        continue
-                else:
-                    return None
-            else:
-                return None
-
-            tmp_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                'game_screenshots', '_scene_query_temp.png'
-            )
-            os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
-            cv2.imwrite(tmp_path, frame)
-            return tmp_path
-        except Exception as e:
-            logger.error(f"截图失败: {e}")
-            return None
-
     def stop(self):
         self._running = False
-        self.wait()
+        self.wait(1000)
+
+
+class BuildFetcherThread(QThread):
+    """后台抓取BD攻略图片线程"""
+    finished_ok = pyqtSignal(list)
+
+    def __init__(self, fetcher, class_type):
+        super().__init__()
+        self.fetcher = fetcher
+        self.class_type = class_type
+
+    def run(self):
+        try:
+            builds = self.fetcher.get_or_fetch_builds(self.class_type)
+            self.finished_ok.emit(builds)
+        except Exception as e:
+            logger.error(f"抓取BD失败: {e}")
+            self.finished_ok.emit([])
 
 
 class AnalysisWorker(QThread):
@@ -583,6 +517,11 @@ class MainWindow(QMainWindow):
         self.scene_vision_worker = None
         self.scene_query_path = None
 
+        # 职业推荐系统
+        self.current_class = None  # 当前角色职业 (D4Class)
+        self.class_builds_cache = {}  # 职业BD缓存 {D4Class: [ClassBuildGuide]}
+        self._class_locked_by_user = False  # 用户是否手动锁定了职业
+
         if VOICE_AVAILABLE:
             try:
                 self.voice_assistant = VoiceAssistant(
@@ -907,58 +846,182 @@ class MainWindow(QMainWindow):
             te.setPlainText(placeholder)
             return te
 
-        # Tab 0: 战斗
+        # ============== Tab 0: 战斗 ==============
         self.tab_combat = QWidget()
         combat_layout = QVBoxLayout(self.tab_combat)
         combat_layout.setContentsMargins(4, 4, 4, 4)
+        # 顶部：当前职业信息
+        self.combat_class_bar = QLabel("⚔ 职业: 等待识别")
+        self.combat_class_bar.setStyleSheet(
+            "color: #fff; background-color: rgba(231,76,60,0.3); "
+            "padding: 6px; font-weight: bold; font-size: 13px; "
+            "border-radius: 4px;"
+        )
+        combat_layout.addWidget(self.combat_class_bar)
+        # BD推荐
         self.combat_info = make_textedit(
             "⚔ 战斗信息\n\n"
             "• 当前怪物信息\n"
             "• BOSS 攻略\n"
             "• DPS 统计\n"
             "• 战斗建议\n\n"
-            "等待 Vision 识别战斗场景...",
+            "请先在右上角选择职业...",
             '#e74c3c',
         )
         combat_layout.addWidget(self.combat_info)
         self.tabs.addTab(self.tab_combat, "⚔ 战斗")
 
-        # Tab 1: 装备
+        # ============== Tab 1: 装备 ==============
         self.tab_equipment = QWidget()
         equip_layout = QVBoxLayout(self.tab_equipment)
         equip_layout.setContentsMargins(4, 4, 4, 4)
+        # 职业选择下拉框
+        equip_class_row = QHBoxLayout()
+        equip_class_label = QLabel("🛡 当前职业:")
+        equip_class_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 12px;")
+        self.equip_class_combo = QComboBox()
+        self.equip_class_combo.setStyleSheet(
+            "QComboBox { background-color: rgba(255,255,255,0.1); color: #fff; "
+            "padding: 4px 8px; border: 1px solid #555; border-radius: 3px; }"
+            "QComboBox::drop-down { border: none; }"
+        )
+        self.equip_class_combo.addItem("❓ 自动识别", None)
+        for cls in D4Class:
+            info = CLASS_NAMES[cls]
+            self.equip_class_combo.addItem(f"{info['icon']} {info['zh']}", cls)
+        self.equip_class_combo.currentIndexChanged.connect(self._on_class_changed)
+        equip_class_row.addWidget(equip_class_label)
+        equip_class_row.addWidget(self.equip_class_combo, 1)
+        equip_class_row.addStretch()
+        equip_layout.addLayout(equip_class_row)
+        # 装备推荐显示
         self.equip_info = make_textedit(
             "🛡 装备/物品\n\n"
             "• 物品词条说明\n"
             "• 装备对比建议\n"
             "• Code of Power 推荐\n"
             "• 装备精工/强化建议\n\n"
-            "等待 Vision 识别装备场景...",
+            "请先选择职业...",
             '#ff6b35',
         )
         equip_layout.addWidget(self.equip_info)
         self.tabs.addTab(self.tab_equipment, "🛡 装备")
 
-        # Tab 2: 技能
+        # ============== Tab 2: 技能 ==============
         self.tab_skill = QWidget()
         skill_layout = QVBoxLayout(self.tab_skill)
         skill_layout.setContentsMargins(4, 4, 4, 4)
-        self.skill_info = make_textedit(
-            "🔮 技能/天赋\n\n"
-            "• 当前职业 BD 推荐\n"
-            "• 技能加点方案\n"
-            "• 巅峰盘建议\n"
-            "• 技能搭配说明\n\n"
-            "等待 Vision 识别技能场景...",
-            '#9b59b6',
+        # 职业显示栏
+        self.skill_class_bar = QLabel("🔮 职业: 等待识别")
+        self.skill_class_bar.setStyleSheet(
+            "color: #fff; background-color: rgba(155,89,182,0.3); "
+            "padding: 6px; font-weight: bold; font-size: 13px; "
+            "border-radius: 4px;"
         )
-        skill_layout.addWidget(self.skill_info)
+        skill_layout.addWidget(self.skill_class_bar)
+        # BD选择 + 刷新按钮
+        skill_bd_row = QHBoxLayout()
+        skill_bd_label = QLabel("📋 推荐BD:")
+        skill_bd_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 12px;")
+        self.skill_bd_combo = QComboBox()
+        self.skill_bd_combo.setStyleSheet(
+            "QComboBox { background-color: rgba(255,255,255,0.1); color: #fff; "
+            "padding: 4px 8px; border: 1px solid #555; border-radius: 3px; }"
+        )
+        self.skill_bd_combo.currentIndexChanged.connect(self._on_bd_changed)
+        self.skill_refresh_btn = QPushButton("🔄 刷新推荐")
+        self.skill_refresh_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(155,89,182,0.5); color: #fff; "
+            "border: none; padding: 4px 8px; border-radius: 3px; font-size: 11px; }"
+            "QPushButton:hover { background-color: rgba(155,89,182,0.8); }"
+        )
+        self.skill_refresh_btn.clicked.connect(self._refresh_build_images)
+        skill_bd_row.addWidget(skill_bd_label)
+        skill_bd_row.addWidget(self.skill_bd_combo, 1)
+        skill_bd_row.addWidget(self.skill_refresh_btn)
+        skill_layout.addLayout(skill_bd_row)
+        # 技能推荐内容（嵌入图片）
+        self.skill_scroll = QScrollArea()
+        self.skill_scroll.setWidgetResizable(True)
+        self.skill_scroll.setStyleSheet("background-color: rgba(0,0,0,0.3); border: none;")
+        self.skill_content = QWidget()
+        self.skill_content_layout = QVBoxLayout(self.skill_content)
+        self.skill_content_layout.setContentsMargins(8, 8, 8, 8)
+        self.skill_text = QLabel("请先选择职业和BD...")
+        self.skill_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.skill_text.setWordWrap(True)
+        self.skill_content_layout.addWidget(self.skill_text)
+        self.skill_content_layout.addStretch()
+        self.skill_scroll.setWidget(self.skill_content)
+        skill_layout.addWidget(self.skill_scroll)
         self.tabs.addTab(self.tab_skill, "🔮 技能")
 
-        # Tab 3: 地图
+        # ============== Tab 2.5: 巅峰（Paragon Board）==============
+        self.tab_peak = QWidget()
+        peak_layout = QVBoxLayout(self.tab_peak)
+        peak_layout.setContentsMargins(4, 4, 4, 4)
+        # 职业显示栏
+        self.peak_class_bar = QLabel("🏆 职业: 等待识别")
+        self.peak_class_bar.setStyleSheet(
+            "color: #000; background-color: rgba(241,196,15,0.3); "
+            "padding: 6px; font-weight: bold; font-size: 13px; "
+            "border-radius: 4px;"
+        )
+        peak_layout.addWidget(self.peak_class_bar)
+        # BD选择 + 刷新按钮
+        peak_bd_row = QHBoxLayout()
+        peak_bd_label = QLabel("📋 推荐BD:")
+        peak_bd_label.setStyleSheet("color: #fff; font-weight: bold; font-size: 12px;")
+        self.peak_bd_combo = QComboBox()
+        self.peak_bd_combo.setStyleSheet(
+            "QComboBox { background-color: rgba(255,255,255,0.1); color: #fff; "
+            "padding: 4px 8px; border: 1px solid #555; border-radius: 3px; }"
+        )
+        self.peak_bd_combo.currentIndexChanged.connect(self._on_peak_bd_changed)
+        self.peak_refresh_btn = QPushButton("🔄 刷新推荐")
+        self.peak_refresh_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(241,196,15,0.5); color: #000; "
+            "border: none; padding: 4px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background-color: rgba(241,196,15,0.8); }"
+        )
+        self.peak_refresh_btn.clicked.connect(self._refresh_build_images)
+        peak_bd_row.addWidget(peak_bd_label)
+        peak_bd_row.addWidget(self.peak_bd_combo, 1)
+        peak_bd_row.addWidget(self.peak_refresh_btn)
+        peak_layout.addLayout(peak_bd_row)
+        # 巅峰盘/雕文推荐内容（嵌入图片）
+        self.peak_scroll = QScrollArea()
+        self.peak_scroll.setWidgetResizable(True)
+        self.peak_scroll.setStyleSheet("background-color: rgba(0,0,0,0.3); border: none;")
+        self.peak_content = QWidget()
+        self.peak_content_layout = QVBoxLayout(self.peak_content)
+        self.peak_content_layout.setContentsMargins(8, 8, 8, 8)
+        self.peak_text = QLabel(
+            "🏆 巅峰盘 / 雕文推荐\n\n"
+            "• 根据当前职业自动加载网上推荐的巅峰盘加点图\n"
+            "• 显示各雕文放置位置和加点路线\n\n"
+            "请先选择职业和BD..."
+        )
+        self.peak_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.peak_text.setWordWrap(True)
+        self.peak_content_layout.addWidget(self.peak_text)
+        self.peak_content_layout.addStretch()
+        self.peak_scroll.setWidget(self.peak_content)
+        peak_layout.addWidget(self.peak_scroll)
+        self.tabs.addTab(self.tab_peak, "🏆 巅峰")
+
+        # ============== Tab 3: 地图 ==============
         self.tab_map = QWidget()
         map_layout = QVBoxLayout(self.tab_map)
         map_layout.setContentsMargins(4, 4, 4, 4)
+        # 职业显示
+        self.map_class_bar = QLabel("🗺 职业: 等待识别")
+        self.map_class_bar.setStyleSheet(
+            "color: #fff; background-color: rgba(52,152,219,0.3); "
+            "padding: 6px; font-weight: bold; font-size: 13px; "
+            "border-radius: 4px;"
+        )
+        map_layout.addWidget(self.map_class_bar)
         self.map_info = make_textedit(
             "🗺 地图/任务\n\n"
             "• 当前位置\n"
@@ -972,14 +1035,211 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_map, "🗺 地图")
 
     def _start_scene_vision_worker(self):
-        """启动后台 Vision 场景识别（5秒/次）"""
+        """启动后台 Vision 场景识别（5秒/次）
+
+        新设计：worker 只做定时器，实际截图+Vision 查询放在主线程 _do_scene_detect()
+        避免多线程 dxcam 实例冲突导致死机。
+        """
         if not self.detector or not self.detector.sdk_available:
             self.scene_info_label.setText("当前场景: SDK未连接")
             return
 
-        self.scene_vision_worker = SceneVisionWorker(self.detector, interval=5.0)
-        self.scene_vision_worker.scene_detected.connect(self._on_scene_detected)
+        self.scene_vision_worker = SceneVisionWorker(interval=5.0)
+        self.scene_vision_worker.request_detect.connect(self._do_scene_detect)
         self.scene_vision_worker.start()
+        logger.info("SceneVisionWorker 启动完成")
+
+    def _orb_template_match(self, frame):
+        """
+        ORB 模板匹配（SDK NPU 兜底）
+
+        D4 动态游戏画面用 SDK NPU 不稳定（细节哈希/embedding 敏感）
+        改用 OpenCV ORB 特征点匹配，对画面内容变化更鲁棒
+
+        Args:
+            frame: 已缩放到 1920 宽的 BGR 画面
+
+        Returns:
+            列表 [{'scene_id', 'picture_id', 'score', 'mode': 'orb'}]
+        """
+        import cv2
+        import os
+        if frame is None or frame.size == 0:
+            return []
+        templates = [
+            ('my_equipment', 'my_equipment_pic', 'game_screenshots/my_equipment_realtime2.png'),
+            ('my_paragon', 'my_paragon_pic', 'game_screenshots/my_paragon_realtime.png'),
+            ('my_skill', 'my_skill_pic', 'game_screenshots/my_skill_realtime.png'),
+            ('my_map', 'my_map_pic', 'game_screenshots/my_map_realtime.png'),
+        ]
+        orb = cv2.ORB_create(nfeatures=2000)
+        kp_curr, des_curr = orb.detectAndCompute(frame, None)
+        if des_curr is None:
+            return []
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        best = None
+        for scene_id, pic_id, tpl_path in templates:
+            if not os.path.exists(tpl_path):
+                continue
+            tpl = cv2.imread(tpl_path)
+            if tpl is None:
+                continue
+            kp_tpl, des_tpl = orb.detectAndCompute(tpl, None)
+            if des_tpl is None:
+                continue
+            matches = bf.match(des_tpl, des_curr)
+            if not matches:
+                continue
+            good = [m for m in matches if m.distance < 50]
+            score = len(good) / max(len(matches), 1)
+            logger.debug(
+                f'ORB {scene_id}: total={len(matches)} good={len(good)} score={score:.3f}'
+            )
+            if best is None or score > best[0]:
+                best = (score, scene_id, pic_id)
+        if best and best[0] > 0.3:
+            return [{
+                'scene_id': best[1],
+                'picture_id': best[2],
+                'score': best[0],
+                'mode': 'orb',
+            }]
+        return []
+
+    def _do_scene_detect(self):
+        """主线程执行一次场景检测（截图+缩放+Vision 查询）
+
+        截图流程：
+        1. 优先用 sc._dxcam（已绑定游戏所在显示器2，region 修复后能截 3440x1440）
+        2. 回退到 mss 截取游戏所在显示器
+        3. 缩放到 1920 宽度 → Vision 查询
+        """
+        if not self.detector or not self.detector.sdk_available:
+            return
+
+        try:
+            import cv2
+            import os
+
+            sc = self.detector.screen_capture
+            mon = sc.game_monitor
+            frame = None
+
+            # 方式1: 使用 sc._dxcam（绑定到游戏所在显示器，修复后能截完整 3440x1440）
+            if sc._dxcam is not None:
+                try:
+                    raw = sc._dxcam.grab()
+                    if raw is None:
+                        raw = sc._dxcam.get_frame()
+                    if raw is not None and raw.size > 0:
+                        frame = raw
+                        logger.info(f"[Vision] dxcam 截图: shape={frame.shape}, mean={frame.mean():.1f}")
+                except Exception as e:
+                    logger.debug(f"dxcam 截图失败: {e}")
+
+            # 方式2: mss 截取游戏所在显示器（包含其他窗口可能遮挡的内容）
+            if frame is None and mon:
+                try:
+                    import mss
+                    import numpy as np
+                    with mss.MSS() as sct:
+                        sct_img = sct.grab(mon)
+                        frame = np.array(sct_img)
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    logger.info(f"[Vision] mss 截图: shape={frame.shape}, mean={frame.mean():.1f}")
+                except Exception as e:
+                    logger.debug(f"mss 截图失败: {e}")
+
+            # 方式3: 回退到 ScreenCapture 自带方法
+            if frame is None or frame.size == 0:
+                frame = sc.capture_full_screen(max_size=0)
+                if frame is not None:
+                    logger.info(f"[Vision] capture_full_screen: shape={frame.shape}")
+
+            if frame is None or frame.size == 0:
+                logger.info("Vision 检测: 截图失败（可能游戏窗口未找到）")
+                return
+
+            # 2. 缩放到 1920 宽度（保持宽高比），实测 1920 宽度匹配得分 0.999+
+            VISION_TARGET_WIDTH = 1920
+            h, w = frame.shape[:2]
+            if w > VISION_TARGET_WIDTH:
+                scale = VISION_TARGET_WIDTH / w
+                frame = cv2.resize(
+                    frame, (VISION_TARGET_WIDTH, int(h * scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
+
+            # 3. 保存临时文件供 Vision 查询
+            tmp_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'game_screenshots', '_scene_query_temp.png'
+            )
+            os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+            cv2.imwrite(tmp_path, frame)
+
+            # 4. Vision 查询（优先 accurate 模式，因为索引是用 accurate 建的）
+            # threshold=-1 不限，topk=5 返回多候选以便 client 端二次过滤
+            results = self.detector.sdk.vision_query(
+                self.detector.instance_id,
+                tmp_path,
+                topk=5,
+                threshold=-1,
+                threshold_2=-1,
+                mode='accurate',
+            )
+            if not results:
+                results = self.detector.sdk.vision_query(
+                    self.detector.instance_id,
+                    tmp_path,
+                    topk=5,
+                    threshold=-1,
+                    threshold_2=-1,
+                    mode='basic',
+                )
+            logger.info(f"[Vision] SDK查询结果: {results[:3] if results else '空'}")
+            if not results:
+                # 兜底：ORB 模板匹配（更适合 D4 动态画面）
+                results = self._orb_template_match(frame)
+                logger.info(f"[Vision] ORB兜底结果: {results[:3] if results else '空'}")
+            if not results:
+                # 调试：查询失败时保存截图，便于排查截到的内容是什么
+                import time as _t
+                debug_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    'game_screenshots',
+                    f'_debug_no_match_{int(_t.time())}.png',
+                )
+                cv2.imwrite(debug_path, frame)
+                logger.info(f"[Vision] 调试截图已保存: {debug_path}")
+                logger.info("Vision 查询: 无匹配结果")
+                self.scene_info_label.setText("当前场景: -- (未识别)")
+                self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+                return
+
+            # 5. 选择得分最高且 >= 0.3 的匹配
+            for top in results:
+                scene_id = top.get('scene_id', '')
+                score = top.get('score', 0)
+                if score >= 0.3:
+                    picture_id = top.get('picture_id', '')
+                    category = classify_scene(scene_id)
+                    logger.info(
+                        f"✓ Vision: {scene_id} ({score*100:.0f}%) -> {category.value}"
+                    )
+                    self._on_scene_detected({
+                        'scene_id': scene_id,
+                        'picture_id': picture_id,
+                        'score': score,
+                        'category': category,
+                    })
+                    return
+
+            logger.info("Vision 查询: 匹配得分均 < 0.3")
+            self.scene_info_label.setText("当前场景: -- (未识别)")
+            self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+        except Exception as e:
+            logger.error(f"Vision 主线程检测异常: {e}")
 
     def _on_scene_detected(self, result):
         """Vision 场景识别结果回调"""
@@ -997,9 +1257,44 @@ class MainWindow(QMainWindow):
         self.scene_info_label.setStyleSheet(f"color: {color}; background-color: transparent;")
 
         if self.auto_switch_check.isChecked() and category != self.current_scene_category:
+            logger.info(f"自动切换条件满足: checked={self.auto_switch_check.isChecked()}, category变化={category.value} != {self.current_scene_category.value}")
             self._switch_to_category(category)
 
         self.current_scene_category = category
+
+        # 自动创建 WebOverlay（仅一次，装备/技能/巅峰 三类界面下激活）
+        # 异步创建：避免阻塞 Vision 检测主线程
+        is_target_scene = category in (
+            SceneCategory.EQUIPMENT, SceneCategory.SKILL, SceneCategory.PEAK,
+        )
+        if is_target_scene and WebOverlay is not None and self.overlay_panel is None:
+            # 用 QTimer.singleShot 异步创建（避免阻塞主线程的 Vision 检测）
+            QTimer.singleShot(
+                0,
+                lambda: self._create_overlay_if_needed()
+            )
+
+        # 同步更新 WebOverlay：刷新构筑下拉框 + 自动加载推荐（无需用户手工选）
+        # 无论 overlay_panel 是否已创建，都要确保最终能显示对应职业的 build
+        if is_target_scene:
+            try:
+                if isinstance(self.overlay_panel, WebOverlay):
+                    if self.current_class is not None:
+                        self.overlay_panel.refresh_builds_for_class(self.current_class)
+                        self.overlay_panel.load_class_recommendation(self.current_class)
+                        logger.info(
+                            f"已自动加载 WebOverlay 推荐: "
+                            f"{self.current_class.value} → {self.overlay_panel._webview.url().toString() if hasattr(self.overlay_panel, '_webview') and self.overlay_panel._webview else 'N/A'}"
+                        )
+                else:
+                    # overlay 还没创建好，等它创建完后在 _create_overlay_if_needed 里处理
+                    logger.info("Overlay 尚未创建，已延后到创建完成后自动加载 build")
+            except Exception as e:
+                logger.error(f"WebOverlay 自动加载失败: {e}")
+
+        # 触发职业 OCR 识别（仅在用户未锁定职业时）
+        if not self._class_locked_by_user:
+            self._trigger_class_ocr()
 
     def _switch_to_category(self, category):
         """切换到指定类别 Tab"""
@@ -1007,10 +1302,12 @@ class MainWindow(QMainWindow):
             SceneCategory.COMBAT: 0,
             SceneCategory.EQUIPMENT: 1,
             SceneCategory.SKILL: 2,
-            SceneCategory.MAP: 3,
+            SceneCategory.PEAK: 3,
+            SceneCategory.MAP: 4,
             SceneCategory.UNKNOWN: 0,
         }
         index = tab_index_map.get(category, 0)
+        logger.info(f"🔄 Tab 切换: {self.current_scene_category.value} -> {category.value} (index={index})")
         self.tabs.setCurrentIndex(index)
 
         color = get_category_color(category)
@@ -1019,15 +1316,438 @@ class MainWindow(QMainWindow):
         )
 
     def _manual_scene_detect(self):
-        """手动触发场景识别"""
-        if not self.scene_vision_worker:
-            return
-        result = self.scene_vision_worker._detect_scene()
-        if result:
-            self._on_scene_detected(result)
+        """手动触发场景识别（直接在主线程执行）"""
+        self._do_scene_detect()
+
+    def _on_class_changed(self, index):
+        """用户从下拉框选择职业"""
+        cls = self.equip_class_combo.currentData()
+        if cls is None:
+            self._class_locked_by_user = False
+            self.current_class = None
+            logger.info("职业选择: 切回自动识别模式")
         else:
-            self.scene_info_label.setText("当前场景: -- (未识别)")
-            self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+            self._class_locked_by_user = True
+            self.current_class = cls
+            logger.info(f"职业选择: 用户手动选择 {get_class_display_name(cls)}")
+        self._refresh_class_info()
+        # 同步刷新 WebOverlay（如果已打开）—— 用户手动切职业时也自动换推荐
+        if isinstance(self.overlay_panel, WebOverlay) and self.current_class is not None:
+            self.overlay_panel.refresh_builds_for_class(self.current_class)
+            if self.overlay_visible:
+                self.overlay_panel.load_class_recommendation(self.current_class)
+
+    def _on_bd_changed(self, index):
+        """用户选择具体BD"""
+        if index < 0:
+            return
+        bd_index = self.skill_bd_combo.currentData()
+        if bd_index is None or self.current_class is None:
+            return
+        builds = self.class_builds_cache.get(self.current_class, [])
+        if 0 <= bd_index < len(builds):
+            self._show_build_images(builds[bd_index])
+
+    def _on_peak_bd_changed(self, index):
+        """用户选择巅峰Tab的具体BD：仅显示该BD的 paragon 巅峰图"""
+        if index < 0:
+            return
+        bd_index = self.peak_bd_combo.currentData()
+        if bd_index is None or self.current_class is None:
+            return
+        builds = self.class_builds_cache.get(self.current_class, [])
+        if 0 <= bd_index < len(builds):
+            self._show_peak_images(builds[bd_index])
+
+    def _refresh_class_info(self):
+        """刷新所有Tab中的职业信息显示"""
+        if self.current_class is None:
+            text = '❓ 等待识别职业...'
+            color = '#888'
+        else:
+            text = f"{get_class_icon(self.current_class)} 职业: {get_class_display_name(self.current_class)}"
+            color = get_class_color(self.current_class)
+
+        if hasattr(self, 'combat_class_bar'):
+            self.combat_class_bar.setText(text)
+            self.combat_class_bar.setStyleSheet(
+                f"color: #fff; background-color: {color}33; "
+                f"padding: 6px; font-weight: bold; font-size: 13px; "
+                f"border-radius: 4px;"
+            )
+        if hasattr(self, 'skill_class_bar'):
+            self.skill_class_bar.setText(text)
+            self.skill_class_bar.setStyleSheet(
+                f"color: #fff; background-color: {color}33; "
+                f"padding: 6px; font-weight: bold; font-size: 13px; "
+                f"border-radius: 4px;"
+            )
+        if hasattr(self, 'peak_class_bar'):
+            self.peak_class_bar.setText(text)
+            self.peak_class_bar.setStyleSheet(
+                f"color: #000; background-color: {color}55; "
+                f"padding: 6px; font-weight: bold; font-size: 13px; "
+                f"border-radius: 4px;"
+            )
+        if hasattr(self, 'map_class_bar'):
+            self.map_class_bar.setText(text)
+            self.map_class_bar.setStyleSheet(
+                f"color: #fff; background-color: {color}33; "
+                f"padding: 6px; font-weight: bold; font-size: 13px; "
+                f"border-radius: 4px;"
+            )
+
+        # 更新BD下拉框
+        self._update_bd_combo()
+        self._update_peak_bd_combo()
+
+    def _update_bd_combo(self):
+        """更新BD下拉框内容"""
+        self.skill_bd_combo.blockSignals(True)
+        self.skill_bd_combo.clear()
+        self.skill_bd_combo.addItem("请选择BD...", None)
+        if self.current_class:
+            builds = self.class_builds_cache.get(self.current_class, [])
+            # 如果还没缓存，加载
+            if not builds:
+                builds = DEFAULT_BUILDS.get(self.current_class, [])
+                self.class_builds_cache[self.current_class] = builds
+            for i, build in enumerate(builds):
+                self.skill_bd_combo.addItem(
+                    f"{build.build_name} ({build.season})",
+                    i,
+                )
+        self.skill_bd_combo.blockSignals(False)
+
+    def _update_peak_bd_combo(self):
+        """更新巅峰Tab的BD下拉框（与技能Tab共享同一份缓存）"""
+        self.peak_bd_combo.blockSignals(True)
+        self.peak_bd_combo.clear()
+        self.peak_bd_combo.addItem("请选择BD...", None)
+        if self.current_class:
+            builds = self.class_builds_cache.get(self.current_class, [])
+            if not builds:
+                builds = DEFAULT_BUILDS.get(self.current_class, [])
+                self.class_builds_cache[self.current_class] = builds
+            for i, build in enumerate(builds):
+                self.peak_bd_combo.addItem(
+                    f"{build.build_name} ({build.season})",
+                    i,
+                )
+        self.peak_bd_combo.blockSignals(False)
+
+    def _show_build_images(self, build):
+        """在技能Tab中显示BD推荐图片"""
+        # 清空原内容（除了 skill_text）
+        while self.skill_content_layout.count() > 1:
+            item = self.skill_content_layout.takeAt(0)
+            if item.widget() and item.widget() != self.skill_text:
+                item.widget().deleteLater()
+
+        # 更新标题
+        self.skill_text.setText(
+            f"<h3 style='color:{get_class_color(self.current_class)};'>"
+            f"{get_class_icon(self.current_class)} {build.build_name}</h3>"
+            f"<p style='color:#aaa;'>赛季: {build.season} | 来源: {build.source_url[:50]}...</p>"
+            f"<p style='color:#fff;'>📊 推荐内容:</p>"
+        )
+
+        # 嵌入图片
+        if not build.image_paths:
+            placeholder = QLabel(
+                "📥 攻略图片未抓取\n\n"
+                "点击'刷新推荐'按钮可在线抓取最新攻略..."
+            )
+            placeholder.setStyleSheet("color: #888; padding: 20px; font-size: 12px;")
+            placeholder.setAlignment(Qt.AlignCenter)
+            self.skill_content_layout.insertWidget(1, placeholder)
+            return
+
+        labels = {
+            'main': '🎯 主推荐',
+            'skills': '⚡ 技能加点',
+            'gear': '🛡 装备词条',
+            'paragon': '🏔 巅峰加点',
+        }
+
+        for key, path in build.image_paths.items():
+            if not os.path.exists(path):
+                continue
+            # 图片标题
+            title = QLabel(labels.get(key, key))
+            title.setStyleSheet(
+                "color: #fff; font-weight: bold; font-size: 12px; "
+                "padding: 4px; background-color: rgba(155,89,182,0.3); "
+                "border-radius: 3px;"
+            )
+            self.skill_content_layout.insertWidget(
+                self.skill_content_layout.count() - 1, title
+            )
+            # 图片
+            img_label = QLabel()
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                # 缩放到合适宽度
+                target_w = 500
+                if pixmap.width() > target_w:
+                    pixmap = pixmap.scaledToWidth(target_w, Qt.SmoothTransformation)
+                img_label.setPixmap(pixmap)
+                img_label.setStyleSheet("padding: 4px; background-color: rgba(0,0,0,0.5);")
+                self.skill_content_layout.insertWidget(
+                    self.skill_content_layout.count() - 1, img_label
+                )
+
+    def _show_peak_images(self, build):
+        """在巅峰Tab中显示该BD的巅峰/雕文推荐图片（仅 paragon 类别）"""
+        # 清空原内容（除了 peak_text 和 stretch）
+        while self.peak_content_layout.count() > 2:
+            item = self.peak_content_layout.takeAt(0)
+            if item.widget() and item.widget() != self.peak_text:
+                item.widget().deleteLater()
+
+        # 更新标题
+        self.peak_text.setText(
+            f"<h3 style='color:{get_class_color(self.current_class)};'>"
+            f"{get_class_icon(self.current_class)} {build.build_name} - 巅峰盘</h3>"
+            f"<p style='color:#aaa;'>赛季: {build.season} | 来源: {build.source_url[:50]}...</p>"
+            f"<p style='color:#fff;'>📊 巅峰推荐内容:</p>"
+        )
+
+        paragon_path = build.image_paths.get('paragon')
+        if not paragon_path or not os.path.exists(paragon_path):
+            placeholder = QLabel(
+                "📥 巅峰盘图片未抓取\n\n"
+                "请先在'技能'或'巅峰'Tab点击'🔄 刷新推荐'按钮\n"
+                "在线抓取该职业的最新巅峰加点图..."
+            )
+            placeholder.setStyleSheet("color: #888; padding: 20px; font-size: 12px;")
+            placeholder.setAlignment(Qt.AlignCenter)
+            self.peak_content_layout.insertWidget(1, placeholder)
+            return
+
+        # 显示巅峰图（标题 + 图片）
+        title = QLabel("🏔 巅峰盘 / 雕文加点")
+        title.setStyleSheet(
+            "color: #000; font-weight: bold; font-size: 13px; "
+            "padding: 6px; background-color: rgba(241,196,15,0.4); "
+            "border-radius: 3px;"
+        )
+        self.peak_content_layout.insertWidget(
+            self.peak_content_layout.count() - 1, title
+        )
+
+        img_label = QLabel()
+        pixmap = QPixmap(paragon_path)
+        if not pixmap.isNull():
+            target_w = 500
+            if pixmap.width() > target_w:
+                pixmap = pixmap.scaledToWidth(target_w, Qt.SmoothTransformation)
+            img_label.setPixmap(pixmap)
+            img_label.setStyleSheet("padding: 4px; background-color: rgba(0,0,0,0.5);")
+            self.peak_content_layout.insertWidget(
+                self.peak_content_layout.count() - 1, img_label
+            )
+        else:
+            err_label = QLabel(f"⚠️ 图片加载失败: {paragon_path}")
+            err_label.setStyleSheet("color: #e74c3c; padding: 8px;")
+            self.peak_content_layout.insertWidget(
+                self.peak_content_layout.count() - 1, err_label
+            )
+
+    def _set_class_from_ocr(self, ocr_text: str):
+        """从OCR文本中识别职业（仅在用户未锁定时）"""
+        if self._class_locked_by_user:
+            return
+        new_class = detect_class_from_text(ocr_text)
+        if new_class is not None and new_class != self.current_class:
+            self.current_class = new_class
+            logger.info(
+                f"OCR 识别职业: {get_class_display_name(new_class)} "
+                f"(来自文本: {ocr_text[:30]})"
+            )
+            # 同步下拉框
+            for i in range(self.equip_class_combo.count()):
+                if self.equip_class_combo.itemData(i) == new_class:
+                    self.equip_class_combo.blockSignals(True)
+                    self.equip_class_combo.setCurrentIndex(i)
+                    self.equip_class_combo.blockSignals(False)
+                    break
+            self._refresh_class_info()
+
+    def _trigger_class_ocr(self):
+        """触发一次职业 OCR 识别（异步，不阻塞主线程）"""
+        # 用 QTimer.singleShot 在 0ms 延迟后启动后台任务
+        # 这里用 detector 已有的 OCR 能力
+        QTimer.singleShot(0, self._do_class_ocr)
+
+    def _do_class_ocr(self):
+        """执行职业自动识别（多策略：图标匹配 → 右侧面板属性 OCR → 全屏关键词 OCR 兜底）"""
+        logger.info("触发职业自动识别")
+        try:
+            import cv2
+            sc = self.detector.screen_capture if self.detector else None
+            if sc is None:
+                return
+            frame = None
+            if sc._dxcam is not None:
+                try:
+                    raw = sc._dxcam.grab()
+                    if raw is None:
+                        raw = sc._dxcam.get_frame()
+                    if raw is not None and raw.size > 0:
+                        frame = raw
+                except Exception:
+                    pass
+            if frame is None:
+                import mss
+                import numpy as np
+                mon = sc.game_monitor
+                if mon:
+                    try:
+                        with mss.MSS() as sct:
+                            sct_img = sct.grab(mon)
+                            frame = np.array(sct_img)
+                            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    except Exception:
+                        pass
+            if frame is None or frame.size == 0:
+                frame = sc.capture_full_screen(max_size=0)
+            if frame is None or frame.size == 0:
+                return
+
+            # ===== 策略1: 职业图标识别（主） =====
+            from class_icon_detector import (
+                ClassIconDetector,
+                crop_right_panel,
+                detect_class_from_attributes,
+            )
+            if not hasattr(self, '_class_icon_detector'):
+                self._class_icon_detector = ClassIconDetector(
+                    sdk=self.detector.sdk if self.detector.sdk_available else None,
+                    instance_id=self.detector.instance_id,
+                )
+            cls = self._class_icon_detector.detect_class(frame)
+            if cls is not None:
+                self._set_class_directly(cls, source='icon')
+                return
+
+            # ===== 策略2: 右侧面板主属性 OCR（辅，识别力量/敏捷/智力等） =====
+            if self.detector.ocr:
+                right_panel = crop_right_panel(frame, ratio=0.45)
+                if right_panel is not None:
+                    try:
+                        panel_text = self.detector.ocr.extract_text(right_panel)
+                        if panel_text:
+                            logger.info(f"右侧面板 OCR: {panel_text[:160]}")
+                            cls = detect_class_from_attributes(panel_text)
+                            if cls is not None:
+                                self._set_class_directly(cls, source='attribute_ocr')
+                                return
+                    except Exception as e:
+                        logger.debug(f"右侧面板 OCR 失败: {e}")
+
+            # ===== 策略3: 顶部 + 全屏 OCR 兜底（识别技能/职业关键词） =====
+            if self.detector.ocr:
+                h, w = frame.shape[:2]
+                # 3a) 顶部区域（包含标题、Tab、角色名等）
+                top_region = frame[:h // 4, :]
+                try:
+                    top_text = self.detector.ocr.extract_text(top_region)
+                    if top_text:
+                        logger.info(f"顶部 OCR 文本: {top_text[:120]}")
+                        cls = detect_class_from_text(top_text)
+                        if cls is not None:
+                            self._set_class_directly(cls, source='top_ocr')
+                            return
+                except Exception as e:
+                    logger.debug(f"顶部 OCR 失败: {e}")
+                # 3b) 中央区域（主要内容区，装备/技能描述）
+                center_region = frame[h // 5: h * 4 // 5, w // 6: w * 5 // 6]
+                try:
+                    center_text = self.detector.ocr.extract_text(center_region)
+                    if center_text:
+                        logger.info(f"中央区域 OCR: {center_text[:120]}")
+                        cls = detect_class_from_text(center_text)
+                        if cls is not None:
+                            self._set_class_directly(cls, source='center_ocr')
+                            return
+                except Exception as e:
+                    logger.debug(f"中央区域 OCR 失败: {e}")
+                # 3c) 全屏兜底（低分辨率缩放到一半，提高 OCR 速度和识别率）
+                try:
+                    import numpy as _np
+                    small_h, small_w = max(h // 2, 540), max(w // 2, 960)
+                    small = cv2.resize(frame, (small_w, small_h), interpolation=cv2.INTER_AREA)
+                    full_text = self.detector.ocr.extract_text(small)
+                    if full_text:
+                        logger.info(f"全屏 OCR: {full_text[:200]}")
+                        cls = detect_class_from_text(full_text)
+                        if cls is not None:
+                            self._set_class_directly(cls, source='full_ocr')
+                            return
+                except Exception as e:
+                    logger.debug(f"全屏 OCR 失败: {e}")
+
+            logger.info("所有职业识别策略都未命中，保持未识别状态")
+        except Exception as e:
+            logger.warning(f"职业自动识别失败: {e}", exc_info=True)
+
+    def _sync_overlay_with_class(self, cls):
+        """将职业识别结果同步到 WebOverlay（不管是否可见都设置好）"""
+        try:
+            if isinstance(self.overlay_panel, WebOverlay):
+                self.overlay_panel.refresh_builds_for_class(cls)
+                self.overlay_panel.load_class_recommendation(cls)
+                logger.info(f"已将 WebOverlay 自动更新到职业: {cls.value}")
+        except Exception as e:
+            logger.error(f"同步 WebOverlay 职业失败: {e}")
+
+    def _set_class_directly(self, cls, source: str = 'unknown'):
+        """根据图标/属性识别结果直接设置职业（绕过 OCR 关键词匹配）"""
+        if self._class_locked_by_user:
+            return
+        from class_recommender import get_class_display_name
+        if cls != self.current_class:
+            self.current_class = cls
+            logger.info(
+                f"自动识别职业: {get_class_display_name(cls)} (来源: {source})"
+            )
+            for i in range(self.equip_class_combo.count()):
+                if self.equip_class_combo.itemData(i) == cls:
+                    self.equip_class_combo.blockSignals(True)
+                    self.equip_class_combo.setCurrentIndex(i)
+                    self.equip_class_combo.blockSignals(False)
+                    break
+            self._refresh_class_info()
+            # 同步刷新 WebOverlay（不管是否可见都加载，这样打开时立即显示对应推荐）
+            self._sync_overlay_with_class(cls)
+
+    def _refresh_build_images(self):
+        """在线抓取最新BD攻略图片（异步）"""
+        if not self.current_class:
+            QMessageBox.information(self, "提示", "请先选择职业")
+            return
+        self.skill_refresh_btn.setEnabled(False)
+        self.skill_refresh_btn.setText("⏳ 抓取中...")
+        # 启动后台线程
+        from build_guide_fetcher import BuildGuideFetcher
+        self._build_fetcher_thread = BuildFetcherThread(
+            BuildGuideFetcher(), self.current_class
+        )
+        self._build_fetcher_thread.finished_ok.connect(self._on_fetch_finished)
+        self._build_fetcher_thread.start()
+
+    def _on_fetch_finished(self, builds):
+        """抓取完成回调"""
+        self.skill_refresh_btn.setEnabled(True)
+        self.skill_refresh_btn.setText("🔄 刷新推荐")
+        if self.current_class:
+            self.class_builds_cache[self.current_class] = builds
+            self._update_bd_combo()
+            QMessageBox.information(
+                self, "完成",
+                f"已抓取 {len(builds)} 个BD的图片！\n请从下拉框选择具体BD查看。"
+            )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1258,6 +1978,52 @@ class MainWindow(QMainWindow):
             self.ocr_indicator.setText(f"引擎: {engine_label}")
             self.ocr_indicator.setStyleSheet("color: #ff6b35; background-color: transparent;")
 
+    def _create_overlay_if_needed(self):
+        """异步创建 WebOverlay（如果还没创建）
+        创建完成后：
+        1) 若 current_class 已知 → 直接加载该职业推荐构筑
+        2) 若 current_class 未知 → 触发 OCR + 右侧面板属性识别 + 图标匹配
+        3) 无论识别成功与否，都设置兜底 build
+        """
+        if self.overlay_panel is not None:
+            return
+        if WebOverlay is None:
+            return
+        try:
+            logger.info("开始创建 WebOverlay（异步）...")
+            self.overlay_panel = self._create_overlay_panel()
+            logger.info("WebOverlay 创建成功")
+            # 立即根据当前职业刷新 + 加载推荐
+            if self.current_class is not None and isinstance(self.overlay_panel, WebOverlay):
+                self._sync_overlay_with_class(self.current_class)
+                logger.info(f"WebOverlay 已自动加载: {self.current_class.value}")
+            else:
+                # current_class 还没识别，触发一次职业识别；识别完成后 set_class_directly
+                # 里会再次调用 _sync_overlay_with_class 同步 build
+                logger.info("WebOverlay 已创建，current_class 尚未识别，触发职业识别")
+                self._trigger_class_ocr()
+                # 兜底：如果 OCR 也没识别出，就刷新到默认下拉（让至少有 build 可选）
+                QTimer.singleShot(
+                    3000,
+                    self._ensure_overlay_has_build,
+                )
+        except Exception as e:
+            logger.error(f"WebOverlay 创建失败: {e}")
+
+    def _ensure_overlay_has_build(self):
+        """确保 WebOverlay 至少有一组 build 可选（兜底策略）"""
+        try:
+            if not isinstance(self.overlay_panel, WebOverlay):
+                return
+            if self.current_class is not None:
+                self._sync_overlay_with_class(self.current_class)
+                logger.info(f"兜底: WebOverlay 已使用 {self.current_class.value} 职业")
+            else:
+                # 仍未识别职业，仅刷新通用下拉（让用户可以手动选）
+                logger.info("兜底: WebOverlay 仍未识别职业，刷新为通用下拉")
+        except Exception as e:
+            logger.error(f"确保 WebOverlay 有 build 时出错: {e}")
+
     def _create_overlay_panel(self):
         if WebOverlay is not None:
             panel = WebOverlay(opacity=0.85)
@@ -1309,7 +2075,10 @@ class MainWindow(QMainWindow):
 
         if self.overlay_panel:
             if isinstance(self.overlay_panel, WebOverlay):
-                pass
+                # 自动加载当前职业对应的推荐构筑（无需用户手工选）
+                if self.current_class is not None:
+                    self.overlay_panel.refresh_builds_for_class(self.current_class)
+                    self.overlay_panel.load_class_recommendation(self.current_class)
             elif isinstance(self.overlay_panel, GraphicalOverlay):
                 panel_names = ['skill', 'paragon', 'equipment']
                 if 0 <= tab_index < len(panel_names):
@@ -1576,6 +2345,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if hasattr(self, 'worker'):
             self.worker.stop()
+        if self.scene_vision_worker:
+            self.scene_vision_worker.stop()
         if self.voice_worker:
             self.voice_worker.stop()
         if self.voice_assistant:
@@ -1590,7 +2361,7 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.WARNING)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

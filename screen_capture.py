@@ -106,7 +106,9 @@ class ScreenCapture:
 
     def _try_dxcam_for_monitor(self, dev_name, mon_rect):
         try:
-            region = (mon_rect.left, mon_rect.top,
+            # dxcam region 是相对于该显示器输出的左上角偏移，不是屏幕绝对坐标
+            # 所以 left/top 应该是 (0, 0)
+            region = (0, 0,
                      mon_rect.right - mon_rect.left,
                      mon_rect.bottom - mon_rect.top)
             best_camera = None

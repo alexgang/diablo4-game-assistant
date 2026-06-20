@@ -79,6 +79,66 @@ POPULAR_BUILDS = [
 ]
 
 
+# 职业 → 推荐构筑列表（按推荐优先级排序）
+# 第一个为默认推荐（最高优先级），当识别到职业后会自动加载
+# 名称中带" - S11推荐"的会显示在 overlay 标题区，便于用户辨认
+CLASS_RECOMMENDED_BUILDS = {
+    'barbarian': [
+        ('溶解旋风 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1SZ2'),
+        ('双重尘魔 (S11 冲层)', f'{D4CORE_BASE}/planner?bd=1SaX'),
+        ('先祖之锤 (经典)', f'{D4CORE_BASE}/planner?bd=1SbP'),
+    ],
+    'sorcerer': [
+        ('电球 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1Tok'),
+        ('冰法 (S11 速刷)', f'{D4CORE_BASE}/planner?bd=1ToE'),
+        ('燃烧 (经典)', f'{D4CORE_BASE}/planner?bd=1Too'),
+    ],
+    'rogue': [
+        ('穿透箭 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1UFG'),
+        ('奇袭刀锋 (S11 速刷)', f'{D4CORE_BASE}/planner?bd=182a'),
+        ('索命陷阱 (冲层)', f'{D4CORE_BASE}/planner?bd=1UFk'),
+        ('暴击流', f'{D4CORE_BASE}/planner?bd=1UF8'),
+    ],
+    'necromancer': [
+        ('纯招骷髅 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1T85'),
+        ('骨矛 (经典)', f'{D4CORE_BASE}/planner?bd=1T8N'),
+        ('血雾', f'{D4CORE_BASE}/planner?bd=1T8P'),
+    ],
+    'spiritborn': [
+        ('灵巫 - 千喉', f'{D4CORE_BASE}/planner?bd=1STz'),
+        ('灵巫 - 虎掌', f'{D4CORE_BASE}/planner?bd=1STh'),
+        ('灵巫 - 鹰爪', f'{D4CORE_BASE}/planner?bd=1STj'),
+    ],
+    'druid': [
+        ('伙伴流 (S11 S 级)', f'{D4CORE_BASE}/planner?bd=1SDb'),
+        ('风暴德 (经典)', f'{D4CORE_BASE}/planner?bd=1SDs'),
+        ('狼人', f'{D4CORE_BASE}/planner?bd=1SDw'),
+    ],
+}
+
+
+# 职业中文名 → key
+CLASS_NAME_TO_KEY = {
+    '野蛮人': 'barbarian',
+    'barbarian': 'barbarian',
+    '法师': 'sorcerer',
+    'sorcerer': 'sorcerer',
+    '术士': 'sorcerer',
+    'warlock': 'sorcerer',
+    '游侠': 'rogue',
+    'rogue': 'rogue',
+    '死灵法师': 'necromancer',
+    '死灵': 'necromancer',
+    'necromancer': 'necromancer',
+    '灵巫': 'spiritborn',
+    'spiritborn': 'spiritborn',
+    '德鲁伊': 'druid',
+    'druid': 'druid',
+    '圣骑士': 'paladin',
+    'paladin': 'paladin',
+}
+
+
 class WebOverlay(QWidget):
 
     closed = pyqtSignal()
@@ -340,6 +400,80 @@ class WebOverlay(QWidget):
 
     def load_build(self, bd_id):
         self.load_url(f'{D4CORE_BASE}/planner?bd={bd_id}')
+
+    def load_class_recommendation(self, class_type, bd_index: int = 0) -> bool:
+        """
+        根据职业自动加载对应的推荐构筑
+
+        Args:
+            class_type: 职业标识，可以是 D4Class 枚举、字符串 key、'barbarian'、中文名等
+            bd_index: 该职业第几个推荐（默认 0 = 最高优先级）
+
+        Returns:
+            bool: 是否成功加载
+        """
+        # 归一化职业 key
+        key = None
+        if class_type is None:
+            return False
+        if hasattr(class_type, 'value'):
+            key = class_type.value  # D4Class 枚举
+        elif isinstance(class_type, str):
+            key = class_type.lower().strip()
+            # 查中文名映射
+            if key not in CLASS_RECOMMENDED_BUILDS:
+                key = CLASS_NAME_TO_KEY.get(class_type, key)
+        if not key:
+            return False
+        if key not in CLASS_RECOMMENDED_BUILDS:
+            logger.debug(f"无 {key} 职业的推荐构筑列表")
+            return False
+
+        builds = CLASS_RECOMMENDED_BUILDS[key]
+        if bd_index < 0 or bd_index >= len(builds):
+            bd_index = 0
+        name, url = builds[bd_index]
+
+        # 同步更新下拉框（让用户也能看到当前选的是什么）
+        for i in range(self._build_combo.count()):
+            item_url = self._build_combo.itemData(i)
+            if item_url == url:
+                self._build_combo.blockSignals(True)
+                self._build_combo.setCurrentIndex(i)
+                self._build_combo.blockSignals(False)
+                break
+
+        logger.info(
+            f"[WebOverlay] 自动加载职业推荐: {key} → {name} ({url})"
+        )
+        self.load_url(url)
+        return True
+
+    def refresh_builds_for_class(self, class_type) -> None:
+        """
+        根据职业刷新下拉框内容（点击"装备/技能/巅峰"Tab 时自动调用）
+
+        Args:
+            class_type: 职业标识
+        """
+        key = None
+        if hasattr(class_type, 'value'):
+            key = class_type.value
+        elif isinstance(class_type, str):
+            key = class_type.lower().strip()
+            if key not in CLASS_RECOMMENDED_BUILDS:
+                key = CLASS_NAME_TO_KEY.get(class_type, key)
+
+        self._build_combo.blockSignals(True)
+        self._build_combo.clear()
+        if key and key in CLASS_RECOMMENDED_BUILDS:
+            for name, url in CLASS_RECOMMENDED_BUILDS[key]:
+                self._build_combo.addItem(name, url)
+        else:
+            for name, url in POPULAR_BUILDS:
+                self._build_combo.addItem(name, url)
+        self._build_combo.setCurrentIndex(0)
+        self._build_combo.blockSignals(False)
 
     def toggle_opacity(self):
         if self.opacity > 0.7:
