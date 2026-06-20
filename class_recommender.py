@@ -196,7 +196,7 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
             class_type=D4Class.SPIRITBORN,
             build_name='闪避反击灵巫',
             season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/evade-spiritborn-guide',
+            source_url='https://maxroll.gg/d4/build-guides/evade-counterswarm-spiritborn-guide',
             image_paths={
                 'skills': _img('spirit_evade_skills.png'),
                 'paragon': _img('spirit_evade_paragon.png'),
