@@ -1615,12 +1615,33 @@ class MainWindow(QMainWindow):
             if frame is None or frame.size == 0:
                 return
 
-            # ===== 策略1: 职业图标识别（主） =====
             from class_icon_detector import (
                 ClassIconDetector,
                 crop_right_panel,
                 detect_class_from_attributes,
             )
+
+            # ===== 策略0: 角色名 OCR → 职业映射（最可靠，本机已知角色）=====
+            # 角色选择界面/游戏内若能 OCR 到已知角色名，直接定职业。
+            if self.detector.ocr:
+                try:
+                    from class_recommender import detect_class_from_character_name
+                    import cv2 as _cv2
+                    _h, _w = frame.shape[:2]
+                    _small = _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
+                                         interpolation=_cv2.INTER_AREA)
+                    _name_text = self.detector.ocr.extract_text(_small) or ""
+                    name_cls, ambiguous = detect_class_from_character_name(_name_text)
+                    if name_cls is not None and not ambiguous:
+                        logger.info(f"角色名映射命中 -> {name_cls.value}")
+                        self._set_class_directly(name_cls, source='char_name')
+                        return
+                    if name_cls is not None and ambiguous:
+                        logger.info(f"角色名重名命中({name_cls.value}),交由图标/属性消歧")
+                except Exception as e:
+                    logger.debug(f"角色名映射失败: {e}")
+
+            # ===== 策略1: 职业图标识别（主） =====
             if not hasattr(self, '_class_icon_detector'):
                 self._class_icon_detector = ClassIconDetector(
                     sdk=self.detector.sdk if self.detector.sdk_available else None,
