@@ -66,9 +66,9 @@ BUILD_SHOTS = [
 
     # ── 灵巫 Spiritborn ──
     {"class": "spiritborn", "name": "闪避反击", "kind": "skills",
-     "url": "https://maxroll.gg/d4/build-guides/evade-spiritborn-guide",
+     "url": "https://maxroll.gg/d4/build-guides/evade-counterswarm-spiritborn-guide",
      "file": "spirit_evade_skills.png", "selector": None},
     {"class": "spiritborn", "name": "闪避反击", "kind": "paragon",
-     "url": "https://maxroll.gg/d4/build-guides/evade-spiritborn-guide",
+     "url": "https://maxroll.gg/d4/build-guides/evade-counterswarm-spiritborn-guide",
      "file": "spirit_evade_paragon.png", "selector": None},
 ]
