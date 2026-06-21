@@ -79,14 +79,13 @@ def crop_class_icon_region(frame: np.ndarray) -> Optional[np.ndarray]:
         return None
     h, w = frame.shape[:2]
 
-    # 相对坐标（基于 3440x1440 截图实测）
-    # 中间职业图标在 x ∈ [3308, 3361], y ∈ [42, 94]
-    # 转为比例：x ∈ [0.962, 0.977], y ∈ [0.029, 0.065]
-    # 略放大边距以容错
-    x_min = int(w * 0.958)
-    x_max = int(w * 0.980)
-    y_min = int(h * 0.025)
-    y_max = int(h * 0.070)
+    # 相对坐标（2560x1600 角色/装备界面实测校准）
+    # 角色界面右上角职业徽记(红底纹章) chosen=(0.942,0.035,0.963,0.078)
+    # 此处略放宽边距以容错不同分辨率/界面
+    x_min = int(w * 0.938)
+    x_max = int(w * 0.967)
+    y_min = int(h * 0.030)
+    y_max = int(h * 0.082)
     if x_max <= x_min or y_max <= y_min:
         return None
     icon = frame[y_min:y_max, x_min:x_max]
