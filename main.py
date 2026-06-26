@@ -108,6 +108,19 @@ def main():
 def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine='auto'):
     """GUI模式"""
     try:
+        # WebEngine(d2core网页构筑)需要的设置:必须在 QApplication 前设
+        from PyQt5.QtCore import Qt, QCoreApplication
+        try:
+            QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+        except Exception:
+            pass
+        # 软件渲染回退:部分机器/远程会话 GPU OpenGL 不可用时,避免 WebEngine 黑屏/崩溃
+        if os.environ.get('D4_SOFTWARE_GL') == '1':
+            try:
+                QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
+            except Exception:
+                pass
+
         from gui import MainWindow
         from PyQt5.QtWidgets import QApplication
 
