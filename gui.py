@@ -507,6 +507,8 @@ class MainWindow(QMainWindow):
 
         self.overlay_panel = None
         self.overlay_visible = False
+        self.skill_webview = None          # 内嵌技能Tab的d2core构筑网页器(lazy)
+        self._skill_web_class = None       # 内嵌webview当前已加载的职业(防重复reload)
 
         self.hotkey_manager = None
 
@@ -540,8 +542,8 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("暗黑破坏神游戏助手")
-        win_w = int(340 * SCREEN_SCALE)
-        win_h = int(700 * SCREEN_SCALE)
+        win_w = int(560 * SCREEN_SCALE)
+        win_h = int(820 * SCREEN_SCALE)
         self.setGeometry(100, 100, win_w, win_h)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
@@ -940,20 +942,27 @@ class MainWindow(QMainWindow):
         skill_bd_row.addWidget(self.skill_bd_combo, 1)
         skill_bd_row.addWidget(self.skill_refresh_btn)
         skill_layout.addLayout(skill_bd_row)
-        # 技能推荐内容（嵌入图片）
+        # 旧的截图区控件保留(隐藏),避免大量旧引用报错;实际用内嵌网页构筑器
         self.skill_scroll = QScrollArea()
         self.skill_scroll.setWidgetResizable(True)
-        self.skill_scroll.setStyleSheet("background-color: rgba(0,0,0,0.3); border: none;")
         self.skill_content = QWidget()
         self.skill_content_layout = QVBoxLayout(self.skill_content)
-        self.skill_content_layout.setContentsMargins(8, 8, 8, 8)
         self.skill_text = QLabel("请先选择职业和BD...")
-        self.skill_text.setStyleSheet("color: #e0e0e0; font-size: 12px;")
         self.skill_text.setWordWrap(True)
         self.skill_content_layout.addWidget(self.skill_text)
         self.skill_content_layout.addStretch()
         self.skill_scroll.setWidget(self.skill_content)
-        skill_layout.addWidget(self.skill_scroll)
+        self.skill_scroll.hide()   # 不显示,改用内嵌网页
+
+        # 内嵌 d2core 构筑网页器容器(webview lazy 创建后插入)
+        self.skill_web_container = QWidget()
+        self.skill_web_layout = QVBoxLayout(self.skill_web_container)
+        self.skill_web_layout.setContentsMargins(0, 0, 0, 0)
+        self._skill_web_placeholder = QLabel("识别职业后将自动加载暗黑核构筑器…")
+        self._skill_web_placeholder.setStyleSheet("color: #999; padding: 20px; font-size: 12px;")
+        self._skill_web_placeholder.setAlignment(Qt.AlignCenter)
+        self.skill_web_layout.addWidget(self._skill_web_placeholder)
+        skill_layout.addWidget(self.skill_web_container, 1)
         self.tabs.addTab(self.tab_skill, "🔮 技能")
 
         # ============== Tab 2.5: 巅峰（Paragon Board）==============
@@ -1262,53 +1271,38 @@ class MainWindow(QMainWindow):
 
         self.current_scene_category = category
 
-        # 自动创建 WebOverlay（仅一次，装备/技能/巅峰 三类界面下激活）
-        # 异步创建：避免阻塞 Vision 检测主线程
+        # 装备/技能/巅峰界面 -> 确保技能Tab的内嵌构筑网页器已创建并加载当前职业
+        # (改为内嵌,不再弹独立 WebOverlay 窗口)
         is_target_scene = category in (
             SceneCategory.EQUIPMENT, SceneCategory.SKILL, SceneCategory.PEAK,
         )
-        if is_target_scene and WebOverlay is not None and self.overlay_panel is None:
-            # 用 QTimer.singleShot 异步创建（避免阻塞主线程的 Vision 检测）
-            QTimer.singleShot(
-                0,
-                lambda: self._create_overlay_if_needed()
-            )
-
-        # 同步更新 WebOverlay：刷新构筑下拉框 + 自动加载推荐（无需用户手工选）
-        # 无论 overlay_panel 是否已创建，都要确保最终能显示对应职业的 build
-        if is_target_scene:
-            try:
-                if isinstance(self.overlay_panel, WebOverlay):
-                    if self.current_class is not None:
-                        self.overlay_panel.refresh_builds_for_class(self.current_class)
-                        self.overlay_panel.load_class_recommendation(self.current_class)
-                        logger.info(
-                            f"已自动加载 WebOverlay 推荐: "
-                            f"{self.current_class.value} → {self.overlay_panel._webview.url().toString() if hasattr(self.overlay_panel, '_webview') and self.overlay_panel._webview else 'N/A'}"
-                        )
-                else:
-                    # overlay 还没创建好，等它创建完后在 _create_overlay_if_needed 里处理
-                    logger.info("Overlay 尚未创建，已延后到创建完成后自动加载 build")
-            except Exception as e:
-                logger.error(f"WebOverlay 自动加载失败: {e}")
+        if is_target_scene and self.current_class is not None:
+            QTimer.singleShot(0, lambda: self._sync_overlay_with_class(self.current_class))
 
         # 触发职业 OCR 识别（仅在用户未锁定职业时）
         if not self._class_locked_by_user:
             self._trigger_class_ocr()
 
     def _switch_to_category(self, category):
-        """切换到指定类别 Tab"""
+        """切换到指定类别 Tab。SKILL/PEAK 都映射到技能Tab(内嵌构筑网页),
+        并驱动网页内部 tab 跟随游戏画面(技能树->技能, 巅峰->巅峰)。"""
         tab_index_map = {
             SceneCategory.COMBAT: 0,
             SceneCategory.EQUIPMENT: 1,
             SceneCategory.SKILL: 2,
-            SceneCategory.PEAK: 3,
+            SceneCategory.PEAK: 2,      # 巅峰也用技能Tab的内嵌网页,靠内部tab区分
             SceneCategory.MAP: 4,
             SceneCategory.UNKNOWN: 0,
         }
         index = tab_index_map.get(category, 0)
         logger.info(f"🔄 Tab 切换: {self.current_scene_category.value} -> {category.value} (index={index})")
         self.tabs.setCurrentIndex(index)
+
+        # 游戏画面在技能树/巅峰界面 -> 网页内部自动切到对应tab
+        if category in (SceneCategory.SKILL, SceneCategory.PEAK):
+            wv = self._ensure_skill_webview()
+            if wv is not None:
+                wv.switch_inner_tab('skill' if category == SceneCategory.SKILL else 'peak')
 
         color = get_category_color(category)
         self.tabs.tabBar().setStyleSheet(
@@ -1418,6 +1412,9 @@ class MainWindow(QMainWindow):
                     i,
                 )
         self.skill_bd_combo.blockSignals(False)
+        # 识别到职业后自动选中第一个 BD 并展示构筑图(index 1 = 第一个真实BD,index 0是"请选择")
+        if self.current_class and self.skill_bd_combo.count() > 1:
+            self.skill_bd_combo.setCurrentIndex(1)
 
     def _update_peak_bd_combo(self):
         """更新巅峰Tab的BD下拉框（与技能Tab共享同一份缓存）"""
@@ -1435,6 +1432,36 @@ class MainWindow(QMainWindow):
                     i,
                 )
         self.peak_bd_combo.blockSignals(False)
+        # 识别到职业后自动选中第一个 BD 并展示巅峰图
+        if self.current_class and self.peak_bd_combo.count() > 1:
+            self.peak_bd_combo.setCurrentIndex(1)
+
+    def _popup_full_image(self, path):
+        """弹出独立窗口显示构筑原图(可滚动查看大图)"""
+        try:
+            from PyQt5.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QLabel as _QL
+            if not os.path.exists(path):
+                return
+            dlg = QDialog(self)
+            dlg.setWindowTitle("构筑大图 - 滚动查看")
+            dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
+            dlg.resize(1000, 900)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(0, 0, 0, 0)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            lbl = _QL()
+            pm = QPixmap(path)
+            # 大图按宽度960显示,高度自适应,可上下滚动
+            if pm.width() > 960:
+                pm = pm.scaledToWidth(960, Qt.SmoothTransformation)
+            lbl.setPixmap(pm)
+            scroll.setWidget(lbl)
+            lay.addWidget(scroll)
+            dlg.show()
+            self._build_img_dialog = dlg  # 保持引用防止被GC
+        except Exception as e:
+            logger.debug(f"弹出大图失败: {e}")
 
     def _show_build_images(self, build):
         """在技能Tab中显示BD推荐图片"""
@@ -1483,16 +1510,23 @@ class MainWindow(QMainWindow):
             self.skill_content_layout.insertWidget(
                 self.skill_content_layout.count() - 1, title
             )
-            # 图片
+            # 图片（适配窗口宽度，点击可弹出原图大窗口）
             img_label = QLabel()
             pixmap = QPixmap(path)
             if not pixmap.isNull():
-                # 缩放到合适宽度
-                target_w = 500
+                # 按当前窗口可用宽度缩放（窗口宽 - 边距）
+                target_w = max(self.width() - 60, 480)
+                shown = pixmap
                 if pixmap.width() > target_w:
-                    pixmap = pixmap.scaledToWidth(target_w, Qt.SmoothTransformation)
-                img_label.setPixmap(pixmap)
+                    shown = pixmap.scaledToWidth(target_w, Qt.SmoothTransformation)
+                img_label.setPixmap(shown)
                 img_label.setStyleSheet("padding: 4px; background-color: rgba(0,0,0,0.5);")
+                img_label.setCursor(Qt.PointingHandCursor)
+                img_label.setToolTip("点击查看大图")
+                # 点击弹出原图大窗口
+                img_label.mousePressEvent = (
+                    lambda ev, p=path: self._popup_full_image(p)
+                )
                 self.skill_content_layout.insertWidget(
                     self.skill_content_layout.count() - 1, img_label
                 )
@@ -1713,21 +1747,54 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.warning(f"职业自动识别失败: {e}", exc_info=True)
 
-    def _sync_overlay_with_class(self, cls):
-        """将职业识别结果同步到 WebOverlay（不管是否可见都设置好）"""
+    def _ensure_skill_webview(self):
+        """在技能Tab里 lazy 创建内嵌 d2core 构筑网页器(WebOverlay embedded模式)"""
+        if self.skill_webview is not None:
+            return self.skill_webview
+        if not OVERLAY_AVAILABLE or WebOverlay is None:
+            return None
         try:
-            if isinstance(self.overlay_panel, WebOverlay):
-                self.overlay_panel.refresh_builds_for_class(cls)
-                self.overlay_panel.load_class_recommendation(cls)
-                logger.info(f"已将 WebOverlay 自动更新到职业: {cls.value}")
+            self.skill_webview = WebOverlay(parent=self.skill_web_container, embedded=True)
+            # 移除占位提示,插入 webview
+            if getattr(self, '_skill_web_placeholder', None):
+                self._skill_web_placeholder.hide()
+                self.skill_web_layout.removeWidget(self._skill_web_placeholder)
+            self.skill_web_layout.addWidget(self.skill_webview)
+            self.skill_webview.show()
+            logger.info("技能Tab内嵌构筑网页器已创建")
         except Exception as e:
-            logger.error(f"同步 WebOverlay 职业失败: {e}")
+            logger.error(f"创建内嵌构筑网页器失败: {e}", exc_info=True)
+            self.skill_webview = None
+        return self.skill_webview
+
+    def _sync_overlay_with_class(self, cls):
+        """识别到职业 -> 内嵌技能Tab的构筑网页器加载对应职业构筑。
+        仅在职业变化时才重载,避免反复 reload 把用户切的内部tab刷回总览。"""
+        try:
+            wv = self._ensure_skill_webview()
+            if wv is not None and cls is not None:
+                if cls != self._skill_web_class:
+                    wv.refresh_builds_for_class(cls)
+                    self._skill_web_class = cls
+                    logger.info(f"内嵌构筑器已加载职业: {cls.value}")
+                # 职业未变 -> 不重载,保留用户当前查看的内部tab
+        except Exception as e:
+            logger.error(f"同步内嵌构筑器失败: {e}", exc_info=True)
 
     def _set_class_directly(self, cls, source: str = 'unknown'):
         """根据图标/属性识别结果直接设置职业（绕过 OCR 关键词匹配）"""
         if self._class_locked_by_user:
             return
         from class_recommender import get_class_display_name
+        # 职业没变,但构筑网页窗口已被关闭/隐藏 -> 重新显示(不重新加载,避免闪烁)
+        if cls == self.current_class and cls is not None:
+            try:
+                if self.overlay_panel and not self.overlay_panel.isVisible():
+                    self.overlay_panel.show_at_game_position()
+                    self.overlay_visible = True
+                    logger.info("构筑窗口被隐藏,已重新显示")
+            except Exception:
+                pass
         if cls != self.current_class:
             self.current_class = cls
             logger.info(
@@ -1740,6 +1807,11 @@ class MainWindow(QMainWindow):
                     self.equip_class_combo.blockSignals(False)
                     break
             self._refresh_class_info()
+            # 识别到职业后自动切到"技能"Tab,让构筑图立即可见(index 2)
+            try:
+                self.tabs.setCurrentIndex(2)
+            except Exception:
+                pass
             # 同步刷新 WebOverlay（不管是否可见都加载，这样打开时立即显示对应推荐）
             self._sync_overlay_with_class(cls)
 
