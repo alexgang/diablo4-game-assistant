@@ -39,33 +39,53 @@ D4CORE_URLS = {
 
 INJECT_CSS = """
 (function(){
-  if(window.__d4injected) return;
-  window.__d4injected = true;
-  var style = document.createElement('style');
-  style.textContent = `
-    body { background: #0c0a08 !important; margin: 0 !important; overflow-x: hidden !important; }
-    header, nav, .header, .footer, .nav-bar, .sidebar, .ad-banner,
-    .qrcode-section, .app-download, .social-links,
-    .site-footer, .site-header, .site-nav,
-    [class*="footer"], [class*="Footer"],
-    [class*="qrcode"], [class*="QRCode"],
-    [class*="download-app"], [class*="DownloadApp"],
-    [class*="social"], [class*="Social"],
-    [class*="cookie"], [class*="Cookie"],
-    [class*="banner-ad"], [class*="ad-container"] { display: none !important; }
-    .main-content, .planner-container, .build-container,
-    [class*="planner"], [class*="Planner"],
-    [class*="build-detail"], [class*="BuildDetail"] {
-      margin: 0 !important; padding: 4px !important;
-      max-width: 100% !important;
+  var STYLE_ID = '__d4inject_style';
+  function apply(){
+    var style = document.getElementById(STYLE_ID);
+    if(!style){
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      document.head.appendChild(style);
     }
-    [class*="container"] { max-width: 100% !important; padding: 2px !important; }
-    [class*="row"] { margin: 0 !important; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
-    ::-webkit-scrollbar-thumb { background: rgba(120,40,20,0.6); border-radius: 3px; }
-  `;
-  document.head.appendChild(style);
+    style.textContent = `
+      /* 隐藏 d2core(uni-app) 左侧导航栏 / 作者侧栏 / 下载弹窗 / 顶栏 */
+      .left-window__nav, .sidebar-nav,
+      .nav-download__popup, .nav-download,
+      .planner-header-aside, .planner-author,
+      .uni-app--showtopwindow > .top-window,
+      [class*="ad-"], [class*="-ad"], [class*="qrcode"], [class*="QRCode"] {
+        display: none !important;
+      }
+      /* 主内容区:取消左边距,撑满整个宽度 */
+      .uni-app--showleftwindow .uni-layout__main,
+      .content-layout__shell-wrap,
+      .content-layout__shell,
+      .content-layout__main,
+      .content-layout__header,
+      .content-layout__header-inner {
+        left: 0 !important; margin-left: 0 !important;
+        width: 100% !important; max-width: 100% !important;
+        padding-left: 4px !important; padding-right: 4px !important;
+      }
+      .planner-inner-layout, .planner-inner-layout__body, .planner-body,
+      .gear-planner-wrapper, .gear-planner, .planner-header-block,
+      .planner-header-main, .planner-variant-bar {
+        width: 100% !important; max-width: 100% !important; margin: 0 !important;
+      }
+      /* 让装备+技能规划器主体更大 */
+      .gear-planner--split { transform-origin: top left; }
+      body, html { background: #0c0a08 !important; overflow-x: hidden !important; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+      ::-webkit-scrollbar-thumb { background: rgba(120,40,20,0.7); border-radius: 4px; }
+    `;
+  }
+  apply();
+  // SPA 路由切换/重渲染后重新应用
+  if(!window.__d4observer){
+    window.__d4observer = new MutationObserver(function(){ apply(); });
+    window.__d4observer.observe(document.body, {childList:true, subtree:false});
+  }
 })();
 """
 
@@ -94,10 +114,8 @@ CLASS_RECOMMENDED_BUILDS = {
         ('燃烧 (经典)', f'{D4CORE_BASE}/planner?bd=1Too'),
     ],
     'rogue': [
-        ('穿透箭 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1UFG'),
-        ('奇袭刀锋 (S11 速刷)', f'{D4CORE_BASE}/planner?bd=182a'),
-        ('索命陷阱 (冲层)', f'{D4CORE_BASE}/planner?bd=1UFk'),
-        ('暴击流', f'{D4CORE_BASE}/planner?bd=1UF8'),
+        ('箭雨冰穿 (S13)', f'{D4CORE_BASE}/planner?bd=1UPR'),
+        ('毒灌刃舞 (S13)', f'{D4CORE_BASE}/planner?bd=1T4s'),
     ],
     'necromancer': [
         ('纯招骷髅 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1T85'),
@@ -144,22 +162,28 @@ class WebOverlay(QWidget):
     closed = pyqtSignal()
     visibility_changed = pyqtSignal(bool)
 
-    def __init__(self, parent=None, opacity=None):
+    def __init__(self, parent=None, opacity=None, embedded=False):
         super().__init__(parent)
         self._cfg = OVERLAY_CONFIG
         self.opacity = opacity if opacity is not None else self._cfg.get('opacity', 0.95)
         self._dragging = False
         self._drag_pos = None
         self._current_url = D4CORE_URLS['planner']
+        self._embedded = embedded
+        self._load_ok = False               # 网页是否加载完成(供自动切tab判断)
+        self._pending_inner_tab = None       # 加载中收到的待切内部tab
 
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setFocusPolicy(Qt.NoFocus)
+        if not embedded:
+            # 独立浮窗模式
+            self.setWindowFlags(
+                Qt.FramelessWindowHint |
+                Qt.WindowStaysOnTopHint |
+                Qt.Tool
+            )
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+            self.setAttribute(Qt.WA_ShowWithoutActivating)
+            self.setFocusPolicy(Qt.NoFocus)
+        # embedded 模式:作为普通子部件,不设窗口标志/焦点策略,网页可正常交互
 
         self._init_ui()
 
@@ -375,7 +399,51 @@ class WebOverlay(QWidget):
 
     def _on_load_finished(self, ok):
         if ok and WEB_AVAILABLE:
+            self._load_ok = True
+            # SPA 异步渲染:首次+多次延迟注入,确保导航/侧栏元素出现后被隐藏
+            from PyQt5.QtCore import QTimer
             self._webview.page().runJavaScript(INJECT_CSS)
+            for delay in (600, 1600, 3200):
+                QTimer.singleShot(
+                    delay,
+                    lambda: self._webview.page().runJavaScript(INJECT_CSS)
+                    if WEB_AVAILABLE else None,
+                )
+            # 网页加载中曾收到切tab请求 -> 现在补切
+            if self._pending_inner_tab:
+                which = self._pending_inner_tab
+                self._pending_inner_tab = None
+                QTimer.singleShot(800, lambda: self.switch_inner_tab(which))
+        else:
+            self._load_ok = False
+
+    def switch_inner_tab(self, which):
+        """切换 d2core 网页内部的 tab。which ∈ {'skill','peak','overview'}
+        游戏画面切到技能树/巅峰界面时调用,让网页自动跟随。"""
+        if not WEB_AVAILABLE or self._webview is None:
+            return
+        label = {'skill': '技能', 'peak': '巅峰', 'overview': '总览'}.get(which)
+        if not label:
+            return
+        # 网页还没加载完 -> 记下来,loadFinished 后补切
+        if not self._load_ok:
+            self._pending_inner_tab = which
+            return
+        js = """
+        (function(){
+          var tabs = document.querySelectorAll('.planner-module-tab');
+          for (var i=0;i<tabs.length;i++){
+            var t = tabs[i].textContent || '';
+            if (t.indexOf('%s') !== -1){ tabs[i].click(); return true; }
+          }
+          return false;
+        })();
+        """ % label
+        self._webview.page().runJavaScript(js)
+        # SPA 元素可能延迟,400ms 后兜底再点一次
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(400, lambda: self._webview.page().runJavaScript(js)
+                          if WEB_AVAILABLE and self._webview else None)
 
     def _go_back(self):
         if WEB_AVAILABLE:
@@ -395,7 +463,9 @@ class WebOverlay(QWidget):
         if not WEB_AVAILABLE:
             return
         self._current_url = url
-        self._url_input.setText(url)
+        self._load_ok = False            # 换页 -> 重新等加载完成
+        if hasattr(self, '_url_input') and self._url_input is not None:
+            self._url_input.setText(url)
         self._webview.load(QUrl(url))
 
     def load_build(self, bd_id):
@@ -474,6 +544,11 @@ class WebOverlay(QWidget):
                 self._build_combo.addItem(name, url)
         self._build_combo.setCurrentIndex(0)
         self._build_combo.blockSignals(False)
+        # 自动加载第一个推荐构筑(否则只填了下拉框不显示网页)
+        if self._build_combo.count() > 0:
+            first_url = self._build_combo.itemData(0)
+            if first_url:
+                self.load_url(first_url)
 
     def toggle_opacity(self):
         if self.opacity > 0.7:
@@ -487,6 +562,14 @@ class WebOverlay(QWidget):
     def show_at_game_position(self, screen_width=1920, screen_height=1080):
         cfg = OVERLAY_CONFIG
         position = cfg.get('position', 'right')
+
+        # 用实际主屏尺寸(默认值在高分屏会算偏)
+        try:
+            from PyQt5.QtWidgets import QApplication
+            scr = QApplication.primaryScreen().geometry()
+            screen_width, screen_height = scr.width(), scr.height()
+        except Exception:
+            pass
 
         w = self.width()
         h = self.height()
@@ -509,6 +592,8 @@ class WebOverlay(QWidget):
 
         self.move(x, y)
         self.show()
+        self.raise_()              # 提到最前(避免被游戏窗口盖住)
+        self.activateWindow()
 
     def _on_close(self):
         self.hide()
