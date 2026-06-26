@@ -166,37 +166,33 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
     D4Class.BARBARIAN: [
         ClassBuildGuide(
             class_type=D4Class.BARBARIAN,
-            build_name='旋风斩野蛮人',
+            build_name='溶解旋风野蛮人',
             season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/whirlwind-barbarian-guide',
+            source_url='https://www.d2core.com/d4/planner?bd=1SZ2',
             image_paths={
-                'skills': _img('barb_ww_skills.png'),
-                'paragon': _img('barb_ww_paragon.png'),
+                'skills': _img('barb_d2c.png'),
             },
         ),
     ],
     D4Class.ROGUE: [
         ClassBuildGuide(
             class_type=D4Class.ROGUE,
-            build_name='飞刀乱舞游侠',
+            build_name='箭雨冰穿游侠',
             season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/dance-of-knives-rogue-guide',
+            source_url='https://www.d2core.com/d4/planner?bd=1UPR',
             image_paths={
-                'skills': _img('rogue_dok_skills.png'),
-                'paragon': _img('rogue_dok_paragon.png'),
-                'gear': _img('rogue_dok_gear.png'),
+                'skills': _img('rogue_d2c.png'),
             },
         ),
     ],
     D4Class.SORCERER: [
         ClassBuildGuide(
             class_type=D4Class.SORCERER,
-            build_name='球状闪电法师',
+            build_name='电球法师',
             season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/ball-lightning-sorcerer-guide',
+            source_url='https://www.d2core.com/d4/planner?bd=1Tok',
             image_paths={
-                'skills': _img('sorc_bl_skills.png'),
-                'paragon': _img('sorc_bl_paragon.png'),
+                'skills': _img('sorc_d2c.png'),
             },
         ),
     ],
@@ -215,12 +211,11 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
     D4Class.NECROMANCER: [
         ClassBuildGuide(
             class_type=D4Class.NECROMANCER,
-            build_name='血潮死灵',
+            build_name='纯招骷髅死灵',
             season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/blood-wave-necromancer-guide',
+            source_url='https://www.d2core.com/d4/planner?bd=1T85',
             image_paths={
-                'skills': _img('necro_bw_skills.png'),
-                'paragon': _img('necro_bw_paragon.png'),
+                'skills': _img('necro_d2c.png'),
             },
         ),
     ],
