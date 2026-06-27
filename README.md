@@ -15,14 +15,16 @@
 
 ### 🔍 屏幕捕获 + OCR识别
 - 实时捕获游戏窗口画面
-- 多引擎OCR文字识别（PaddleOCR / EasyOCR / Tesseract）
+- **OpenVINO OCR**（基于 PaddleOCR 模型）为主引擎，支持 CPU/GPU/NPU 设备配置
+- 多引擎回退：OpenVINO → EasyOCR → Tesseract
 - 自动识别游戏状态：任务、BOSS、位置、职业
 - 图像预处理：暗色背景增强、高对比度模式
+- **QuestOCR**：从画面右侧任务面板裁剪文字（原始分辨率，避免缩放模糊），自动匹配攻略库
 
 ### 🎤 语音交互
-- **语音输入**：SDK ASR优先 / Google / Sphinx / Whisper 多引擎
+- **语音输入**：SDK ASR优先（Paraformer 中文优化，首次调用自动启用） / Google / Sphinx / Whisper 多引擎
 - **意图识别**：自动解析7种玩家意图（查BOSS/查装备/查技能/查构筑/查任务/查位置/通用搜索）
-- **语音播报**：Edge TTS / pyttsx3 语音回复搜索结果
+- **语音播报**：Edge TTS（最优，低延迟） / MeloTTS / pyttsx3 语音回复搜索结果
 - **持续监听**：支持唤醒词激活，后台持续监听
 
 ### 📊 内容索引 + 智能推荐
@@ -31,13 +33,6 @@
 - 关键词模糊匹配 + 相关度排序
 - 上下文感知推荐
 
-### 🎨 图形化游戏叠加层
-- **技能树可视化**：QPainter绘制的圆形节点+连线，活跃技能发光高亮
-- **巅峰盘可视化**：菱形网格节点，稀有节点金色高亮，多盘垂直排列
-- **装备布局可视化**：角色轮廓+环绕装备槽位，稀有度边框着色
-- 半透明暗黑风格，三档透明度调节
-- 快捷键切换面板：Ctrl+Alt+E/S/P（装备/技能/巅峰）
-
 ### 🌐 网站数据爬虫
 - 基于 Selenium 的动态页面爬取
 - 支持爬取：装备列表、技能详情、构筑推荐、攻略详情
@@ -45,10 +40,11 @@
 
 ### 🔮 d2core 构筑自动加载（核心特性）
 - **嵌入式网页展示**：在主窗口内嵌 QWebEngineView，直接加载 [d2core.com](https://www.d2core.com) 的在线构筑页面，无需切换浏览器
-- **自动职业识别**：综合三种策略自动识别当前角色职业
-  - 职业图标模板匹配（多区域裁剪 + ORB 特征匹配）
-  - OCR 关键词识别（中英文职业名 + 角色名映射）
-  - 主属性识别（力量/智力/敏捷/意志 数值最大者）
+- **自动职业识别**：四级策略自动识别当前角色职业
+  - 策略1：右上角职业图标 Vision/模板匹配（装备/巅峰界面）
+  - 策略1.5：**技能栏图标识别**（所有界面可见，战斗/城镇/地图通用，程序自动采集模板）
+  - 策略2：右侧面板主属性 OCR（力量/智力/敏捷/意志 数值最大者）
+  - 策略3：OCR 关键词识别（中英文职业名 + 角色名映射）
 - **自动加载构筑**：识别到职业后自动加载 d2core 上对应的 S13 季节构筑
 - **场景驱动网页内 Tab 切换**：5 秒一次 Vision 场景识别，自动驱动网页内部 tab 跟随游戏画面
   - 游戏在装备界面 → 网页切到「总览」
@@ -56,39 +52,62 @@
   - 游戏在巅峰界面 → 网页切到「巅峰」
 - **JS 注入切换**：通过注入 JS 点击 `.planner-module-tab` 实现网页内部 tab 无刷新切换
 
+### 📖 任务图文攻略自动加载（核心特性）
+- **嵌入式游民星空攻略**：在主窗口内嵌 QWebEngineView 加载 [gamersky.com](https://www.gamersky.com) 攻略页面，注入 CSS 优化阅读体验（隐藏广告/侧栏/评论）
+- **QuestOCR 自动匹配**：每 10 秒从游戏右侧任务面板 OCR 识别任务名，自动匹配攻略库并加载对应 URL
+  - 支线任务（按区域：破碎群峰/索格伦/干燥平原/凯基斯坦/哈维泽/三神教）
+  - 主线/DLC 流程攻略
+  - 新手指南、赛季攻略
+- **在线搜索兜底**：攻略库未匹配时，后台线程执行 Bing 搜索 + 智谱 GLM 汇总，主线程加载最佳 URL（约 4 秒，不阻塞 UI）
+- **三色状态提示**：攻略库匹配（绿色）/ 搜索中（橙色）/ LLM 汇总完成（蓝色）
+
+### 🎨 图形化叠加层（降级备选）
+> 当 d2core 网页不可用时，提供本地 QPainter 绘制的可视化面板作为备选方案。
+- 技能树/巅峰盘/装备布局三种可视化面板
+- 半透明暗黑风格，快捷键切换：Ctrl+Alt+E/S/P（装备/技能/巅峰）
+- 默认使用嵌入式网页方案，此模块仅在网页加载失败时启用
+
 ### 🖥️ GUI界面（无边框置顶窗口）
 - **无边框置顶**：`FramelessWindowHint | WindowStaysOnTopHint`，半透明暗色主题
 - **header 拖动手柄**：点击窗口顶部 header 任意位置即可拖动窗口（QLabel 对鼠标事件透明，关闭按钮仍可点击）
-- **菜单栏集成**：所有功能按钮隐藏到顶部菜单栏（场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索），最大化网页展示区域
-- **隐藏 Tab 栏**：界面不再显示战斗/装备/技能/巅峰/地图 tab，由场景识别自动切换
+- **菜单栏集成**：所有功能按钮隐藏到顶部菜单栏（场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索 / 攻略），最大化网页展示区域
+  - 「攻略」菜单：支线任务（按区域）/ 主线DLC / 新手指南 / 赛季攻略 / 搜索攻略 / 前进后退
+- **隐藏 Tab 栏**：界面不再显示战斗/装备/技能/巅峰/地图/攻略 tab 栏，由场景识别自动切换；默认显示攻略 Tab
 - SDK连接状态、OCR 引擎、语音引擎、场景信息实时显示在 header
 - 搜索通过菜单触发弹窗输入
 
 ## 📁 项目结构
 
 ```
-├── main.py                 # 主入口文件（含 WebEngine 数据目录沙箱重定向）
-├── config.py               # 配置文件（含SDK配置）
+├── 启动助手.bat            # 一键启动脚本（双击即可，自动拉起SDK服务器+主程序）
+├── main.py                 # 主入口文件（含 WebEngine 数据目录沙箱重定向 + SDK自动拉起）
+├── config.py               # 配置文件（含SDK/OCR/LLM配置，自动加载 .env）
 ├── sdk_client.py           # Intel Gaming Assistant SDK客户端
-├── gui.py                  # GUI界面（无边框置顶窗口 + 菜单栏 + 嵌入式网页）
+├── gui.py                  # GUI界面（无边框置顶窗口 + 菜单栏 + 嵌入式网页 + QuestOCR）
 ├── web_overlay.py          # 嵌入式 QWebEngineView（加载 d2core 构筑网页 + JS 注入切换 tab）
+├── quest_guide_webview.py  # 嵌入式游民星空攻略网页（CSS注入优化阅读体验）
+├── quest_guide_config.py   # 任务攻略配置（游民星空 URL 索引 + 关键词匹配）
+├── online_quest_searcher.py# 在线搜索兜底（Bing搜索 + 智谱GLM汇总）
 ├── scene_classifier.py     # 场景分类器（SceneCategory: 战斗/装备/技能/巅峰/地图）
-├── class_icon_detector.py  # 职业图标检测（多区域裁剪 + ORB 模板匹配）
+├── class_icon_detector.py  # 职业识别（右上角图标 + 技能栏识别 + 模板自动采集）
 ├── class_recommender.py    # 职业推荐器（OCR关键词 + 角色名 + 主属性识别）
 ├── builds_config.py        # d2core S13 季节构筑截图配置
-├── graphical_overlay.py    # 图形化游戏叠加层
+├── graphical_overlay.py    # 图形化叠加层（降级备选，网页不可用时启用）
 ├── overlay.py              # 文本叠加层（降级备选）
 ├── realtime_assistant.py   # 实时助手核心
 ├── game_detector.py        # 游戏状态检测（SDK优先+本地降级）
 ├── game_data.py            # 本地游戏数据库（D4数据）
 ├── content_indexer.py      # 内容索引引擎
 ├── screen_capture.py       # 屏幕捕获模块
-├── ocr_recognizer.py       # OCR文字识别模块
-├── voice_assistant.py      # 语音交互模块（SDK ASR优先）
+├── ocr_recognizer.py       # OCR文字识别模块（多引擎封装）
+├── openvino_inference.py   # OpenVINO推理引擎（支持CPU/GPU/NPU设备配置）
+├── voice_assistant.py      # 语音交互模块（SDK ASR优先 + Edge TTS）
 ├── damage_analyzer.py      # 伤害分析模块（SDK BAR集成）
 ├── hotkey_manager.py       # 全局快捷键管理
 ├── data_spider.py          # 网站数据爬虫
+├── build_vision_index.py   # Vision索引构建脚本（场景识别用）
 ├── requirements.txt        # 依赖列表
+├── .env                    # 环境变量（API Key，不入版本库）
 └── resources/              # 资源目录
     ├── images/             # 图像资源
     └── data/               # 数据文件
@@ -98,16 +117,30 @@
 
 ## 🚀 快速开始
 
+### 🎯 一键启动（推荐游戏玩家）
+
+双击项目根目录下的 **`启动助手.bat`** 即可，无需打开命令行、无需记忆任何参数。
+
+启动脚本会自动完成：
+1. 检测并启动 SDK 服务器（如未运行，自动后台拉起）
+2. 等待 SDK 就绪（最多 40 秒，模型加载需要时间）
+3. 启动游戏助手主程序
+
+> 关闭启动窗口不会关闭游戏助手，如需退出请关闭主程序窗口。
+> 如 SDK 服务器不在本机，主程序会自动降级为本地模式，功能不受影响。
+
 ### 1. 环境要求
 
 - Python 3.10+
 - Windows 10/11（屏幕捕获和游戏窗口检测依赖Windows API）
-- Intel Gaming Assistant ToolServer（可选，启用SDK功能）
+- Intel Gaming Assistant ToolServer（可选，SDK功能需要，已内置在项目中）
 - 麦克风（语音输入功能需要）
 - 音频输出设备（语音播报功能需要）
 - 网络连接（SDK服务、Google语音识别、Edge TTS、网站爬虫需要）
 
 ### 2. 安装依赖
+
+首次使用需安装依赖：
 
 ```bash
 # 克隆项目
@@ -140,22 +173,20 @@ pip install openai-whisper
 pip install selenium webdriver-manager
 ```
 
-### 3. 启动 Intel Gaming Assistant SDK（可选）
+### 3. 配置 API Key（可选，在线搜索攻略用）
 
-如需使用SDK增强功能（Vision场景识别、Knowledge知识问答、ASR语音识别、BAR Boss识别等）：
+在项目根目录创建 `.env` 文件（已加入 .gitignore 不会提交）：
 
-```bash
-# 启动 GameAssistantToolServer
-# 默认运行在 http://127.0.0.1:9190
-GameAssistantToolServer.exe
+```
+ZHIPU_API_KEY=你的智谱API Key
 ```
 
-> **注意**：SDK为可选功能。未启动SDK时，程序自动使用本地模式运行，所有功能不受影响。
+未配置时，任务攻略的在线搜索兜底功能不可用，但攻略库匹配仍正常工作。
 
-### 4. 启动应用
+### 4. 命令行启动（开发者可选）
 
 ```bash
-# GUI模式（默认，推荐）
+# GUI模式（默认，推荐）—— 等同于双击 启动助手.bat
 python main.py
 
 # 指定SDK服务器地址
@@ -235,7 +266,7 @@ SDK_CONFIG = {
     },
     'asr': {
         'enabled': True,
-        'hotwords': '暗黑破坏神 莉莉丝 野蛮人 法师 游侠 死灵法师 德鲁伊',
+        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 圣骑士 游侠',
     },
     'bar': {
         'enabled': True,
@@ -244,30 +275,37 @@ SDK_CONFIG = {
 }
 ```
 
+### LLM 配置（在线搜索攻略汇总用）
+
+编辑 `config.py` 中的 `LLM_CONFIG`，或在 `.env` 文件中设置 `ZHIPU_API_KEY`：
+
+```python
+LLM_CONFIG = {
+    'provider': 'zhipu',
+    'api_key': os.environ.get('ZHIPU_API_KEY', ''),  # 从 .env 读取
+    'model': 'glm-4-flash',
+    'base_url': 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    'timeout': 15,
+    'max_search_results': 8,
+}
+```
+
+### OCR 设备配置
+
+`config.py` 中的 `OCR_CONFIG['device']` 控制 OpenVINO 推理设备：
+
+| 值 | 说明 |
+|----|------|
+| `'AUTO'` | 自动选择最优设备（推荐，默认值） |
+| `'CPU'` | CPU 推理（小模型最稳定，11ms） |
+| `'GPU'` | GPU 推理（首次编译慢约 8s，小模型加速有限） |
+| `'NPU'` | NPU 推理（不兼容 PaddleOCR，仅适合大模型） |
+
+> **实测结论**：PaddleOCR 的 det/rec/cls 模型因动态 shape 和算子限制不兼容 NPU；CPU 对小模型最快最稳定，因此默认 `'AUTO'`。
+
 ---
 
-## 🎨 图形化叠加层
-
-游戏叠加层提供三种可视化面板，在游戏中直接显示加点建议和出装建议：
-
-### 技能树面板
-- 圆形节点表示技能，活跃技能发光高亮
-- 分类标题：核心/防御/终极/被动
-- 点数显示在节点内部
-- 职业色填充（野蛮人红/法师蓝/游侠绿/死灵法师紫/德鲁伊橙）
-
-### 巅峰盘面板
-- 菱形网格节点（8×6）
-- 稀有节点金色高亮，中心节点职业色
-- 多个巅峰盘垂直排列
-
-### 装备布局面板
-- 角色轮廓居中
-- 装备槽位按身体部位排列（头盔/胸甲/手套/裤子/靴子/武器/护符/戒指）
-- 稀有度边框着色（暗金橙/传奇棕/套装绿）
-- 空槽虚线框显示
-
-### 快捷键
+## ⌨️ 快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
@@ -292,9 +330,12 @@ python main.py
 
 启动后会在屏幕上出现一个半透明、无边框、置顶的暗色面板，包含：
 - **顶部 header**：标题、OCR 引擎、语音引擎、SDK 状态、当前场景信息、关闭按钮（**点击 header 任意位置可拖动窗口**）
-- **菜单栏**：场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索（所有功能按钮隐藏在此）
-- **主区域**：嵌入式 QWebEngineView 加载 d2core 构筑网页，根据场景识别自动切换网页内部 tab
-- **自动流程**：识别到职业后自动加载对应构筑 → 5 秒一次场景识别 → 自动切换网页 tab（装备→总览 / 技能树→技能 / 巅峰→巅峰）
+- **菜单栏**：场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索 / 攻略（所有功能按钮隐藏在此）
+- **主区域**：默认显示攻略 Tab，内嵌 QWebEngineView 加载游民星空攻略页面；识别到职业后自动切换到 d2core 构筑网页
+- **自动流程**：
+  - 职业识别：右上角图标 → 技能栏识别 → 主属性 OCR → 关键词匹配（四级策略）
+  - 构筑加载：识别到职业后自动加载 d2core 对应构筑，5 秒一次场景识别驱动网页 tab 切换
+  - 任务攻略：每 10 秒 QuestOCR 识别右侧任务面板，自动匹配攻略库；未匹配时 Bing + GLM 在线汇总
 
 > **提示**：若启动后窗口无法拖动，请尝试点击窗口顶部 header 区域（标题文字、引擎状态等标签处均可）。
 
@@ -338,7 +379,7 @@ python main.py --cli
 │              Intel Gaming Assistant SDK                    │
 │            (GameAssistantToolServer :9190)                 │
 ├───────────────────────────────────────────────────────────┤
-│     屏幕捕获  │  语音交互  │  网站爬虫  │  图形化叠加层      │
+│  屏幕捕获 │ 语音交互 │ 网站爬虫 │ 嵌入式网页(d2core+游民星空) │
 ├────────────────────┬──────────────────────────────────────┤
 │   本地数据库        │      网站缓存数据                      │
 │   GameDatabase     │      Web Data (JSON)                 │
@@ -347,19 +388,20 @@ python main.py --cli
 
 ### 数据流
 
-**SDK模式：**
+**职业识别 + 构筑加载：**
 ```
-屏幕捕获 → Vision场景识别 → Knowledge RAG问答 → 智能推荐 → 图形化叠加层
+屏幕捕获 → 右上角图标/技能栏识别/主属性OCR/关键词匹配 → 自动加载 d2core 构筑网页
 ```
 
-**本地降级模式：**
+**任务攻略自动加载：**
 ```
-屏幕捕获 → OCR文字识别 → 内容索引匹配 → 智能推荐 → 图形化叠加层
+屏幕捕获 → QuestOCR识别任务面板 → 攻略库匹配 → 加载游民星空URL
+                                  └未匹配→ Bing搜索+GLM汇总 → 加载最佳URL
 ```
 
 **语音模式：**
 ```
-语音输入 → SDK ASR/Google识别 → 意图识别 → 搜索 → 语音播报 + 叠加层
+语音输入 → SDK ASR/Google识别 → 意图识别 → 搜索 → 语音播报
 ```
 
 ---
@@ -367,8 +409,8 @@ python main.py --cli
 ## ❓ 常见问题
 
 ### Q: 启动后显示"SDK服务器不可用"？
-A: 这是正常的，SDK为可选功能。如需启用：
-1. 启动 `GameAssistantToolServer.exe`（默认端口9190）
+A: 双击 `启动助手.bat` 时会自动启动 SDK 服务器。若仍不可用：
+1. 确认 `GamingAssistant Package` 目录存在且包含 `GameAssistantToolServer.exe`
 2. 或指定远程服务器：`python main.py --sdk-url=http://远程地址:9190`
 3. 未启动SDK时程序自动使用本地模式，功能不受影响
 
@@ -383,9 +425,6 @@ A:
 1. 确认麦克风已连接并在系统设置中启用
 2. 安装语音依赖：`pip install SpeechRecognition`
 3. Windows可能需要允许Python访问麦克风
-
-### Q: 叠加层遮挡游戏画面？
-A: 点击叠加层顶部的👁按钮可切换透明度（0.85 → 0.5 → 0.2），或按—按钮最小化内容区
 
 ### Q: OCR识别结果不准确？
 A:

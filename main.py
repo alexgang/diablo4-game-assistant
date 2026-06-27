@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def ensure_sdk_server():
-    """确保 SDK 服务器已启动，如未启动则给出提示"""
+    """确保 SDK 服务器已启动，如未启动则自动拉起"""
     from sdk_client import GamingAssistantSDK
     sdk_url = SDK_CONFIG['server_url']
     sdk = GamingAssistantSDK(sdk_url)
@@ -48,24 +48,31 @@ def ensure_sdk_server():
         print(f"SDK服务器已连接: {sdk_url}")
         return True
 
-    print(f"\n" + "=" * 60)
-    print("SDK服务器未运行，请执行以下操作：")
-    print("1. 在另一个终端窗口中运行:")
-    print(f"   cd \"{SDK_SERVER_WORK_DIR}\"")
-    print(f"   .\\{os.path.basename(SDK_SERVER_PATH)}")
-    print("2. 等待服务器初始化完成后，游戏助手将自动连接")
-    print("=" * 60 + "\n")
-    
-    # 等待一段时间再检查一次
-    for i in range(30):
-        time.sleep(1)
-        if sdk.check_server():
-            print(f"SDK服务器已连接 (等待{i + 1}秒)")
-            return True
-        if i % 10 == 9:
-            print(f"  等待SDK服务器连接... ({i + 1}秒)")
+    # 自动拉起 SDK 服务器(后台运行,不阻塞主程序)
+    if SDK_SERVER_PATH and os.path.exists(SDK_SERVER_PATH):
+        print(f"正在自动启动 SDK 服务器: {os.path.basename(SDK_SERVER_PATH)}")
+        try:
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: 后台运行,独立进程组
+            subprocess.Popen(
+                [SDK_SERVER_PATH],
+                cwd=SDK_SERVER_WORK_DIR,
+                creationflags=0x00000008 | 0x00000200,
+            )
+        except Exception as e:
+            print(f"启动 SDK 服务器失败: {e}")
+    else:
+        print(f"SDK服务器程序未找到: {SDK_SERVER_PATH}")
 
-    print("SDK服务器仍未连接，请先启动服务器")
+    print("等待 SDK 服务器初始化...", end='', flush=True)
+    # 等待服务器就绪(最多 40 秒,模型加载需要时间)
+    for i in range(40):
+        time.sleep(1)
+        print('.', end='', flush=True)
+        if sdk.check_server():
+            print(f" 已连接 (等待{i + 1}秒)")
+            return True
+
+    print("\nSDK服务器未就绪,将使用本地模式运行(功能不受影响)")
     return False
 
 
