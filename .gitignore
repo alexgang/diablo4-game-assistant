@@ -39,6 +39,11 @@ GamingAssistant Package/
 
 # 游戏截图(调试用,全部忽略)
 game_screenshots/
+# 但保留场景识别必需的 ORB 模板文件(被 gui.py _orb_template_match 引用)
+!game_screenshots/my_equipment_realtime2.png
+!game_screenshots/my_paragon_realtime.png
+!game_screenshots/my_skill_realtime.png
+!game_screenshots/my_map_realtime.png
 
 # 临时调试文件(下划线开头)
 _tmp_*
