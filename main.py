@@ -102,10 +102,10 @@ def main():
     if use_cli:
         run_cli_mode(use_web, use_ocr, ocr_engine, use_voice, stt_engine, tts_engine)
     else:
-        run_gui_mode(use_web, ocr_engine, stt_engine, tts_engine)
+        run_gui_mode(use_web, use_ocr, ocr_engine, stt_engine, tts_engine)
 
 
-def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine='auto'):
+def run_gui_mode(use_web=False, use_ocr=True, ocr_engine=None, stt_engine='google', tts_engine='auto'):
     """GUI模式"""
     try:
         # WebEngine(d2core网页构筑)需要的设置:必须在 QApplication 前设
@@ -120,6 +120,15 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
                 QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
             except Exception:
                 pass
+        # WebEngine 用户数据目录重定向到项目内(避免沙箱/AppData 写入限制导致崩溃)
+        _webengine_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.webengine_data')
+        os.makedirs(_webengine_data, exist_ok=True)
+        _existing_flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '')
+        _user_data_flag = f'--user-data-dir="{_webengine_data}"'
+        if _user_data_flag not in _existing_flags:
+            os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = (
+                f'{_existing_flags} {_user_data_flag}'.strip()
+            )
 
         from gui import MainWindow
         from PyQt5.QtWidgets import QApplication
@@ -132,6 +141,7 @@ def run_gui_mode(use_web=False, ocr_engine=None, stt_engine='google', tts_engine
         app = QApplication(sys.argv)
         window = MainWindow(
             use_web_data=use_web,
+            use_ocr=use_ocr,
             ocr_engine=ocr_engine,
             stt_engine=stt_engine,
             tts_engine=tts_engine,

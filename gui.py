@@ -495,9 +495,9 @@ class GuideWidget(QWidget):
 class MainWindow(QMainWindow):
     """主窗口"""
 
-    def __init__(self, use_web_data=False, ocr_engine=None, stt_engine='google', tts_engine='auto'):
+    def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None, stt_engine='google', tts_engine='auto'):
         super().__init__()
-        self.detector = GameDetector(use_web_data=use_web_data, use_ocr=True, ocr_engine=ocr_engine)
+        self.detector = GameDetector(use_web_data=use_web_data, use_ocr=use_ocr, ocr_engine=ocr_engine)
         self.stt_engine = stt_engine
         self.tts_engine = tts_engine
 
