@@ -45,7 +45,8 @@ CLASS_FROM_SCENE_ID = {
 
 
 # ============== 主属性 → 职业映射（用于 OCR 辅助识别） ==============
-# D4 6 个职业的主属性
+# D4 只有 4 种核心属性：力量/敏捷/智力/意志。
+# 灵巫(Spiritborn)没有独占主属性，无法靠主属性反推，须依赖角色名/图标识别。
 PRIMARY_ATTRIBUTE_TO_CLASS = {
     '力量': D4Class.BARBARIAN,
     'strength': D4Class.BARBARIAN,
@@ -55,8 +56,6 @@ PRIMARY_ATTRIBUTE_TO_CLASS = {
     'intelligence': D4Class.SORCERER,
     '意志': D4Class.DRUID,
     'willpower': D4Class.DRUID,
-    '韧性': D4Class.SPIRITBORN,
-    'resolve': D4Class.SPIRITBORN,
 }
 
 
@@ -141,7 +140,7 @@ def detect_class_from_attributes(text: str) -> Optional[D4Class]:
     """
     从右侧面板 OCR 文本中识别主属性，反推职业
 
-    D4 巅峰/装备界面的右侧通常会显示 5 个属性：力量、敏捷、智力、意志、韧性
+    D4 巅峰/装备界面的右侧通常会显示 4 个核心属性：力量、敏捷、智力、意志
     数值最高的那个一般是当前职业的主属性。
     策略：
     1. 如果有数值上下文（如"敏捷 1500"），提取每个属性的数值，选最大的
@@ -155,7 +154,7 @@ def detect_class_from_attributes(text: str) -> Optional[D4Class]:
 
     # 策略1：尝试提取"属性名 + 数字"形式，选数值最大的属性
     attr_pattern = re.compile(
-        r'(力量|敏捷|智力|意志|韧性|strength|dexterity|intelligence|willpower|resolve)'
+        r'(力量|敏捷|智力|意志|strength|dexterity|intelligence|willpower)'
         r'\s*[:：]?\s*(\d{1,6})',
         re.IGNORECASE
     )
@@ -174,11 +173,10 @@ def detect_class_from_attributes(text: str) -> Optional[D4Class]:
             )
             return top_cls
 
-    # 策略2：兜底——按属性优先级（德鲁伊/野蛮人 > 死灵/游侠 > 法师/灵巫靠其他线索）
-    # 优先匹配更具体的关键词
+    # 策略2：兜底——按属性优先级（德鲁伊/野蛮人 > 死灵/游侠 > 法师靠其他线索）
+    # 优先匹配更具体的关键词。灵巫无独占主属性，不在此反推。
     priority_keywords = [
         ('willpower', D4Class.DRUID), ('意志', D4Class.DRUID),
-        ('resolve', D4Class.SPIRITBORN), ('韧性', D4Class.SPIRITBORN),
         ('strength', D4Class.BARBARIAN), ('力量', D4Class.BARBARIAN),
         ('dexterity', D4Class.ROGUE), ('敏捷', D4Class.ROGUE),
         ('intelligence', D4Class.SORCERER), ('智力', D4Class.SORCERER),

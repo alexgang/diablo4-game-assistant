@@ -51,7 +51,7 @@ class BuildGuideFetcher:
                 if not src:
                     continue
                 # 过滤小图标
-                if any(x in src.lower() for x in ['icon', 'logo', 'avatar', 'avatar', 'btn', 'button']):
+                if any(x in src.lower() for x in ['icon', 'logo', 'avatar', 'btn', 'button']):
                     continue
                 # 转为绝对URL
                 abs_url = urljoin(guide.source_url, src)

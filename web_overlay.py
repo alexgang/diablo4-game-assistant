@@ -94,32 +94,31 @@ POPULAR_BUILDS = [
     ('法师 - 电球', f'{D4CORE_BASE}/planner?bd=1Tok'),
     ('游侠 - 穿透箭', f'{D4CORE_BASE}/planner?bd=1UFG'),
     ('死灵 - 纯招骷髅', f'{D4CORE_BASE}/planner?bd=1T85'),
-    ('圣骑士 - 冰戒', f'{D4CORE_BASE}/planner?bd=1SSx'),
-    ('术士 - 妙妙剔骨', f'{D4CORE_BASE}/planner?bd=1STz'),
+    ('灵巫 - 妙妙剔骨', f'{D4CORE_BASE}/planner?bd=1STz'),
 ]
 
 
 # 职业 → 推荐构筑列表（按推荐优先级排序）
 # 第一个为默认推荐（最高优先级），当识别到职业后会自动加载
-# 名称中带" - S11推荐"的会显示在 overlay 标题区，便于用户辨认
+# 构筑名只保留流派名（不带赛季后缀），避免赛季过期后标签误导
 CLASS_RECOMMENDED_BUILDS = {
     'barbarian': [
-        ('溶解旋风 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1SZ2'),
-        ('双重尘魔 (S11 冲层)', f'{D4CORE_BASE}/planner?bd=1SaX'),
-        ('先祖之锤 (经典)', f'{D4CORE_BASE}/planner?bd=1SbP'),
+        ('溶解旋风', f'{D4CORE_BASE}/planner?bd=1SZ2'),
+        ('双重尘魔', f'{D4CORE_BASE}/planner?bd=1SaX'),
+        ('先祖之锤', f'{D4CORE_BASE}/planner?bd=1SbP'),
     ],
     'sorcerer': [
-        ('电球 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1Tok'),
-        ('冰法 (S11 速刷)', f'{D4CORE_BASE}/planner?bd=1ToE'),
-        ('燃烧 (经典)', f'{D4CORE_BASE}/planner?bd=1Too'),
+        ('电球', f'{D4CORE_BASE}/planner?bd=1Tok'),
+        ('冰法', f'{D4CORE_BASE}/planner?bd=1ToE'),
+        ('燃烧', f'{D4CORE_BASE}/planner?bd=1Too'),
     ],
     'rogue': [
-        ('箭雨冰穿 (S13)', f'{D4CORE_BASE}/planner?bd=1UPR'),
-        ('毒灌刃舞 (S13)', f'{D4CORE_BASE}/planner?bd=1T4s'),
+        ('箭雨冰穿', f'{D4CORE_BASE}/planner?bd=1UPR'),
+        ('毒灌刃舞', f'{D4CORE_BASE}/planner?bd=1T4s'),
     ],
     'necromancer': [
-        ('纯招骷髅 (S11 T0)', f'{D4CORE_BASE}/planner?bd=1T85'),
-        ('骨矛 (经典)', f'{D4CORE_BASE}/planner?bd=1T8N'),
+        ('纯招骷髅', f'{D4CORE_BASE}/planner?bd=1T85'),
+        ('骨矛', f'{D4CORE_BASE}/planner?bd=1T8N'),
         ('血雾', f'{D4CORE_BASE}/planner?bd=1T8P'),
     ],
     'spiritborn': [
@@ -128,8 +127,8 @@ CLASS_RECOMMENDED_BUILDS = {
         ('灵巫 - 鹰爪', f'{D4CORE_BASE}/planner?bd=1STj'),
     ],
     'druid': [
-        ('伙伴流 (S11 S 级)', f'{D4CORE_BASE}/planner?bd=1SDb'),
-        ('风暴德 (经典)', f'{D4CORE_BASE}/planner?bd=1SDs'),
+        ('伙伴流', f'{D4CORE_BASE}/planner?bd=1SDb'),
+        ('风暴德', f'{D4CORE_BASE}/planner?bd=1SDs'),
         ('狼人', f'{D4CORE_BASE}/planner?bd=1SDw'),
     ],
 }
@@ -152,8 +151,6 @@ CLASS_NAME_TO_KEY = {
     'spiritborn': 'spiritborn',
     '德鲁伊': 'druid',
     'druid': 'druid',
-    '圣骑士': 'paladin',
-    'paladin': 'paladin',
 }
 
 
