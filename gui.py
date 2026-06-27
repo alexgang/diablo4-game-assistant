@@ -1477,8 +1477,7 @@ class MainWindow(QMainWindow):
                 self.scene_info_label.setText("当前场景: -- (未识别)")
                 self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
 
-                # 场景未识别时,尝试 OCR 右侧任务追踪面板识别任务名 -> 自动加载攻略
-                self._try_ocr_quest_guide(original_frame)
+                # 场景未识别时,不加载攻略(仅地图场景才触发 QuestOCR)
                 return
 
             # 5. 选择得分最高且 >= 0.3 的匹配
@@ -1502,9 +1501,7 @@ class MainWindow(QMainWindow):
             logger.info("Vision 查询: 匹配得分均 < 0.3")
             self.scene_info_label.setText("当前场景: -- (未识别)")
             self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
-
-            # 场景未识别时,尝试 OCR 右侧任务追踪面板识别任务名 -> 自动加载攻略
-            self._try_ocr_quest_guide(original_frame)
+            # 场景未识别时,不加载攻略(仅地图场景才触发 QuestOCR)
 
         except Exception as e:
             logger.error(f"Vision 主线程检测异常: {e}")
@@ -1687,14 +1684,27 @@ class MainWindow(QMainWindow):
     def _switch_to_category(self, category):
         """切换到指定类别 Tab。装备/技能/巅峰 都映射到技能Tab(内嵌构筑网页),
         并驱动网页内部 tab 跟随游戏画面:
-          装备->总览, 技能树->技能, 巅峰->巅峰"""
+          装备->总览, 技能树->技能, 巅峰->巅峰
+        未识别场景时隐藏窗口,不影响玩家游戏;可通过 Ctrl+Alt+H 重新显示"""
+        # 未识别场景 -> 隐藏窗口(后台运行,不干扰玩家)
+        if category == SceneCategory.UNKNOWN:
+            if self.isVisible():
+                logger.info(f"🔄 场景未识别,隐藏窗口到后台 (从 {self.current_scene_category.value})")
+                self.hide()
+            return
+
+        # 其他场景 -> 确保窗口可见(从后台恢复)
+        if not self.isVisible():
+            self.show()
+            self.activateWindow()
+            logger.info(f"🔄 场景已识别,恢复窗口显示 ({category.value})")
+
         tab_index_map = {
             SceneCategory.COMBAT: 0,
             SceneCategory.EQUIPMENT: 2,
             SceneCategory.SKILL: 2,
             SceneCategory.PEAK: 2,
             SceneCategory.MAP: 4,
-            SceneCategory.UNKNOWN: 0,
         }
         index = tab_index_map.get(category, 0)
         logger.info(f"🔄 Tab 切换: {self.current_scene_category.value} -> {category.value} (index={index})")
@@ -1711,16 +1721,23 @@ class MainWindow(QMainWindow):
             if wv is not None:
                 wv.switch_inner_tab(inner_tab_map[category])
 
-        # 地图场景:提示用户可通过菜单查看任务攻略
+        # 地图场景:切换到攻略Tab并触发 QuestOCR 自动匹配任务攻略
         if category == SceneCategory.MAP:
-            self.guide_top_bar.setText(
-                "📖 攻略 - 识别到地图场景,可通过菜单「攻略」查看对应区域任务"
-            )
+            # 切到攻略 Tab(index 5)
+            self.tabs.setCurrentIndex(5)
+            self.guide_top_bar.setText("📖 任务图文攻略 - 识别到地图场景")
             self.guide_top_bar.setStyleSheet(
                 "color: #4ade80; background-color: rgba(20,20,40,200); "
                 "padding: 4px 8px; font-weight: bold; font-size: 12px; "
                 "border-bottom: 1px solid rgba(139,0,0,0.4);"
             )
+            # 地图场景触发 QuestOCR:识别右侧任务面板,自动加载攻略
+            # 从 detector 获取最新帧
+            if self.detector and hasattr(self.detector, '_cached_img'):
+                frame = self.detector._cached_img
+                if frame is not None and frame.size > 0:
+                    logger.info("🗺️ 地图场景:触发 QuestOCR 识别任务面板")
+                    self._try_ocr_quest_guide(frame)
         else:
             self.guide_top_bar.setText("📖 任务图文攻略 - 游民星空")
             self.guide_top_bar.setStyleSheet(
