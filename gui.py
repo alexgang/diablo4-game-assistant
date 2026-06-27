@@ -1412,8 +1412,10 @@ class MainWindow(QMainWindow):
                 logger.info("Vision 检测: 截图失败（可能游戏窗口未找到）")
                 return
 
-            # 保存原始分辨率 frame 供 QuestOCR 使用(缩放后中文文字会模糊,OCR 识别效果差)
+            # 保存原始分辨率 frame 供 QuestOCR / 职业识别 使用(缩放后中文文字会模糊,OCR 识别效果差)
             original_frame = frame
+            # 缓存场景检测帧,供后续职业识别复用(避免画面切换时重新截图导致 dxcam 崩溃)
+            self._last_scene_frame = frame.copy()
 
             # 2. 缩放到 1920 宽度（保持宽高比），实测 1920 宽度匹配得分 0.999+
             VISION_TARGET_WIDTH = 1920
@@ -2065,35 +2067,41 @@ class MainWindow(QMainWindow):
         logger.info("触发职业自动识别")
         try:
             import cv2
-            sc = self.detector.screen_capture if self.detector else None
-            if sc is None:
-                return
-            frame = None
-            if sc._dxcam is not None:
-                try:
-                    raw = sc._dxcam.grab()
-                    if raw is None:
-                        raw = sc._dxcam.get_frame()
-                    if raw is not None and raw.size > 0:
-                        frame = raw
-                except Exception:
-                    pass
-            if frame is None:
-                import mss
-                import numpy as np
-                mon = sc.game_monitor
-                if mon:
+
+            # 优先复用场景检测时截到的帧(避免画面切换时重新截图导致 dxcam 崩溃)
+            frame = getattr(self, '_last_scene_frame', None)
+            if frame is not None and frame.size > 0:
+                logger.info(f"复用场景检测帧: shape={frame.shape}")
+            else:
+                sc = self.detector.screen_capture if self.detector else None
+                if sc is None:
+                    return
+                frame = None
+                if sc._dxcam is not None:
                     try:
-                        with mss.MSS() as sct:
-                            sct_img = sct.grab(mon)
-                            frame = np.array(sct_img)
-                            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        raw = sc._dxcam.grab()
+                        if raw is None:
+                            raw = sc._dxcam.get_frame()
+                        if raw is not None and raw.size > 0:
+                            frame = raw
                     except Exception:
                         pass
-            if frame is None or frame.size == 0:
-                frame = sc.capture_full_screen(max_size=0)
-            if frame is None or frame.size == 0:
-                return
+                if frame is None:
+                    import mss
+                    import numpy as np
+                    mon = sc.game_monitor
+                    if mon:
+                        try:
+                            with mss.MSS() as sct:
+                                sct_img = sct.grab(mon)
+                                frame = np.array(sct_img)
+                                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        except Exception:
+                            pass
+                if frame is None or frame.size == 0:
+                    frame = sc.capture_full_screen(max_size=0)
+                if frame is None or frame.size == 0:
+                    return
 
             from class_icon_detector import (
                 ClassIconDetector,
