@@ -65,6 +65,37 @@ def capture_game_screen():
     return None
 
 
+def capture_from_clipboard():
+    """从剪贴板读取截图(Win+Shift+S / PrintScreen 截图后直接粘贴)
+
+    比 dxcam 自动截图更简单:
+    1. 在游戏中按 Win+Shift+S 框选整个游戏窗口(或按 PrintScreen 截全屏)
+    2. 运行本工具,选择 'paste' 模式
+    3. 自动从剪贴板读取并保存为模板
+    """
+    try:
+        from PIL import ImageGrab, Image
+        import numpy as np
+        img = ImageGrab.grabclipboard()
+        if img is None:
+            print("  剪贴板中没有图片!")
+            print("  请先按 Win+Shift+S 截图(或 PrintScreen),然后再运行本步骤")
+            return None
+        if isinstance(img, list):
+            # 剪贴板里是文件列表
+            if not img:
+                return None
+            img = Image.open(img[0])
+        img = img.convert('RGB')
+        frame = np.array(img)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        print(f"  从剪贴板读取成功: shape={frame.shape}")
+        return frame
+    except Exception as e:
+        print(f"  剪贴板读取失败: {e}")
+        return None
+
+
 def resize_to_1920(frame):
     """缩放到 1920 宽度(与 Vision 查询时一致)"""
     if frame is None:
@@ -113,6 +144,7 @@ def main():
         print("-" * 60)
         print("请在游戏中切换到目标界面,然后输入场景类型")
         print("输入 'quit' 退出,输入 'list' 查看已采集模板")
+        print("提示: 先按 Win+Shift+S 或 PrintScreen 截图,再输入 'paste <场景>' 从剪贴板导入")
         user_input = input("场景类型 (equipment/skill/paragon/map/combat): ").strip().lower()
 
         if user_input == 'quit' or user_input == 'q':
@@ -125,19 +157,37 @@ def main():
                 size = f"{os.path.getsize(path)//1024}KB" if exists else "-"
                 print(f"  {scene_type:12s} {filename:35s} {'[OK]' if exists else '[缺失]'} {size}")
             continue
+
+        # 解析 paste 模式: "paste map" / "paste equipment" 等
+        use_clipboard = False
+        if user_input.startswith('paste'):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2:
+                print("  用法: paste <场景类型>,例如: paste map")
+                continue
+            user_input = parts[1].strip()
+            use_clipboard = True
+
         if user_input not in SCENE_TEMPLATES:
             print(f"  未知场景: {user_input},请输入 equipment/skill/paragon/map/combat")
             continue
 
         filename = SCENE_TEMPLATES[user_input]
         print(f"\n正在采集 [{user_input}] 场景...")
-        print("3秒后截图,请确保游戏界面已切换到位!")
-        for i in range(3, 0, -1):
-            print(f"  {i}...", end='', flush=True)
-            time.sleep(1)
-        print(" 截图!")
 
-        frame = capture_game_screen()
+        if use_clipboard:
+            # 剪贴板模式:直接读取(Win+Shift+S / PrintScreen 截图后直接导入)
+            print("从剪贴板读取截图...")
+            frame = capture_from_clipboard()
+        else:
+            # 自动截图模式:3秒倒计时
+            print("3秒后截图,请确保游戏界面已切换到位!")
+            for i in range(3, 0, -1):
+                print(f"  {i}...", end='', flush=True)
+                time.sleep(1)
+            print(" 截图!")
+            frame = capture_game_screen()
+
         if frame is None or frame.size == 0:
             print("  截图失败!")
             continue

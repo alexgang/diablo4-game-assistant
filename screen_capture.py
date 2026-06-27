@@ -1,5 +1,6 @@
 import struct
 import ctypes
+import threading
 from ctypes import wintypes
 import numpy as np
 import cv2
@@ -26,6 +27,10 @@ class ScreenCapture:
         self._dxcam = None
         self._dxcam_full = None
         self._game_rect = None
+        # dxcam 是 native C 扩展,多线程并发 grab() 会触发 0xC0000005 崩溃
+        # (主线程 _do_scene_detect 和子线程 AnalysisWorker 都会调用)
+        # 用线程锁保证同一时刻只有一个线程能 grab()
+        self._dxcam_lock = threading.Lock()
         self._detect_game_monitor()
 
     def _detect_game_monitor(self):
@@ -159,14 +164,16 @@ class ScreenCapture:
     def _get_dxcam_frame(self):
         if self._dxcam is None:
             return None
-        try:
-            frame = self._dxcam.grab()
-            if frame is None:
-                frame = self._dxcam.get_frame()
-            return frame
-        except Exception as e:
-            logger.debug(f"dxcam grab 失败: {e}")
-            return None
+        # 加锁:防止多线程并发 grab() 导致 native 崩溃
+        with self._dxcam_lock:
+            try:
+                frame = self._dxcam.grab()
+                if frame is None:
+                    frame = self._dxcam.get_frame()
+                return frame
+            except Exception as e:
+                logger.debug(f"dxcam grab 失败: {e}")
+                return None
 
     def _update_game_rect(self):
         if not self.game_hwnd:
@@ -209,7 +216,9 @@ class ScreenCapture:
 
             if self._dxcam_full is not None:
                 try:
-                    frame = self._dxcam_full.grab()
+                    # 加锁:防止多线程并发 grab() 导致 native 崩溃
+                    with self._dxcam_lock:
+                        frame = self._dxcam_full.grab()
                     if frame is not None and frame.size > 0:
                         left, top, right, bottom = game_rect
                         mon = self.game_monitor

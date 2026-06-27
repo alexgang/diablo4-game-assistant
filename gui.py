@@ -1480,9 +1480,8 @@ class MainWindow(QMainWindow):
             dxcam_disabled = getattr(self, '_dxcam_disabled', False)
             if sc._dxcam is not None and not dxcam_disabled:
                 try:
-                    raw = sc._dxcam.grab()
-                    if raw is None:
-                        raw = sc._dxcam.get_frame()
+                    # 用 _get_dxcam_frame() 走线程锁路径,防止与 AnalysisWorker 子线程并发 grab() 崩溃
+                    raw = sc._get_dxcam_frame()
                     if raw is not None and raw.size > 0 and raw.ndim == 3:
                         # 额外校验: 帧数据必须是连续的且形状合理
                         if raw.shape[0] >= 100 and raw.shape[1] >= 100:
@@ -1589,12 +1588,8 @@ class MainWindow(QMainWindow):
                 cv2.imwrite(debug_path, frame)
                 logger.info(f"[Vision] 调试截图已保存: {debug_path}")
                 logger.info("Vision 查询: 无匹配结果")
-                self.scene_info_label.setText("当前场景: -- (未识别)")
-                self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
-
-                # 场景未识别 -> 隐藏窗口到后台(不干扰玩家游戏)
-                self.current_scene_category = SceneCategory.UNKNOWN
-                self._switch_to_category(SceneCategory.UNKNOWN)
+                # 未识别滞回:连续 3 次未识别才隐藏,避免单次波动导致窗口频繁闪现
+                self._handle_unknown_scene()
                 return
 
             # 5. 选择得分最高且 >= 0.3 的匹配
@@ -1616,14 +1611,33 @@ class MainWindow(QMainWindow):
                     return
 
             logger.info("Vision 查询: 匹配得分均 < 0.3")
-            self.scene_info_label.setText("当前场景: -- (未识别)")
-            self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
-            # 场景未识别 -> 隐藏窗口到后台(不干扰玩家游戏)
-            self.current_scene_category = SceneCategory.UNKNOWN
-            self._switch_to_category(SceneCategory.UNKNOWN)
+            # 未识别滞回:连续 3 次未识别才隐藏,避免单次波动导致窗口频繁闪现
+            self._handle_unknown_scene()
 
         except Exception as e:
             logger.error(f"Vision 主线程检测异常: {e}")
+
+    def _handle_unknown_scene(self):
+        """处理未识别场景:连续 3 次未识别才隐藏窗口
+
+        避免单次识别波动(ORB 得分在阈值附近抖动)导致窗口频繁 show/hide 闪现。
+        识别到任何场景时由 _on_scene_detected 重置计数。
+        """
+        streak = getattr(self, '_unknown_streak', 0) + 1
+        self._unknown_streak = streak
+        UNKNOWN_HIDE_THRESHOLD = 3  # 连续 3 次(约15秒)未识别才隐藏
+        self.scene_info_label.setText(
+            f"当前场景: -- (未识别 {streak}/{UNKNOWN_HIDE_THRESHOLD})"
+        )
+        self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+        logger.info(f"[Vision] 未识别连续 {streak}/{UNKNOWN_HIDE_THRESHOLD} 次")
+        if streak >= UNKNOWN_HIDE_THRESHOLD:
+            self.current_scene_category = SceneCategory.UNKNOWN
+            self._switch_to_category(SceneCategory.UNKNOWN)
+        else:
+            # 未达阈值:保持当前窗口状态,不隐藏(避免闪现)
+            # 但更新内部类别标记为 UNKNOWN,以便下次识别到场景时能触发切换
+            self.current_scene_category = SceneCategory.UNKNOWN
 
     def _try_ocr_quest_guide(self, frame):
         """OCR 识别游戏右侧任务追踪面板的任务名,匹配到攻略则自动加载
@@ -1773,6 +1787,9 @@ class MainWindow(QMainWindow):
         scene_id = result['scene_id']
         score = result['score']
 
+        # 识别到场景:重置未识别计数
+        self._unknown_streak = 0
+
         display_name = get_category_display_name(category)
         color = get_category_color(category)
         score_pct = f"{score * 100:.0f}%"
@@ -1799,6 +1816,14 @@ class MainWindow(QMainWindow):
         # 触发职业 OCR 识别（仅在用户未锁定职业时）
         if not self._class_locked_by_user:
             self._trigger_class_ocr()
+
+        # 地图场景:每次检测都尝试 OCR 右侧任务面板,识别到任务名就加载攻略
+        # (QuestOCR 内部有 10 秒节流,不会频繁执行)
+        if category == SceneCategory.MAP:
+            frame = getattr(self, '_last_scene_frame', None)
+            if frame is not None and frame.size > 0:
+                logger.info("🗺️ 地图场景:触发 QuestOCR 识别任务面板")
+                self._try_ocr_quest_guide(frame)
 
     def _switch_to_category(self, category):
         """切换到指定类别 Tab。装备/技能/巅峰 都映射到技能Tab(内嵌构筑网页),
@@ -1840,7 +1865,7 @@ class MainWindow(QMainWindow):
             if wv is not None:
                 wv.switch_inner_tab(inner_tab_map[category])
 
-        # 地图场景:切换到攻略Tab并触发 QuestOCR 自动匹配任务攻略
+        # 地图场景:切换到攻略Tab(QuestOCR 由 _on_scene_detected 每次检测触发,有10秒节流)
         if category == SceneCategory.MAP:
             # 切到攻略 Tab(index 5)
             self.tabs.setCurrentIndex(5)
@@ -1850,13 +1875,6 @@ class MainWindow(QMainWindow):
                 "padding: 4px 8px; font-weight: bold; font-size: 12px; "
                 "border-bottom: 1px solid rgba(139,0,0,0.4);"
             )
-            # 地图场景触发 QuestOCR:识别右侧任务面板,自动加载攻略
-            # 从 detector 获取最新帧
-            if self.detector and hasattr(self.detector, '_cached_img'):
-                frame = self.detector._cached_img
-                if frame is not None and frame.size > 0:
-                    logger.info("🗺️ 地图场景:触发 QuestOCR 识别任务面板")
-                    self._try_ocr_quest_guide(frame)
         else:
             self.guide_top_bar.setText("📖 任务图文攻略 - 游民星空")
             self.guide_top_bar.setStyleSheet(
@@ -2194,9 +2212,8 @@ class MainWindow(QMainWindow):
                 frame = None
                 if sc._dxcam is not None:
                     try:
-                        raw = sc._dxcam.grab()
-                        if raw is None:
-                            raw = sc._dxcam.get_frame()
+                        # 用 _get_dxcam_frame() 走线程锁路径,防止与 AnalysisWorker 子线程并发 grab() 崩溃
+                        raw = sc._get_dxcam_frame()
                         if raw is not None and raw.size > 0:
                             frame = raw
                     except Exception:
