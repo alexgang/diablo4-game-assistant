@@ -1477,7 +1477,9 @@ class MainWindow(QMainWindow):
                 self.scene_info_label.setText("当前场景: -- (未识别)")
                 self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
 
-                # 场景未识别时,不加载攻略(仅地图场景才触发 QuestOCR)
+                # 场景未识别 -> 隐藏窗口到后台(不干扰玩家游戏)
+                self.current_scene_category = SceneCategory.UNKNOWN
+                self._switch_to_category(SceneCategory.UNKNOWN)
                 return
 
             # 5. 选择得分最高且 >= 0.3 的匹配
@@ -1501,7 +1503,9 @@ class MainWindow(QMainWindow):
             logger.info("Vision 查询: 匹配得分均 < 0.3")
             self.scene_info_label.setText("当前场景: -- (未识别)")
             self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
-            # 场景未识别时,不加载攻略(仅地图场景才触发 QuestOCR)
+            # 场景未识别 -> 隐藏窗口到后台(不干扰玩家游戏)
+            self.current_scene_category = SceneCategory.UNKNOWN
+            self._switch_to_category(SceneCategory.UNKNOWN)
 
         except Exception as e:
             logger.error(f"Vision 主线程检测异常: {e}")
