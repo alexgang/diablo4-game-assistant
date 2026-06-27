@@ -230,6 +230,101 @@ class VoiceWorker(QThread):
         self.wait()
 
 
+class ClassDetectWorker(QThread):
+    """后台职业识别线程
+
+    将 OCR / Vision 查询等耗时操作从主线程移出,避免 GUI 假死。
+    主线程通过 frame_ready 信号接收结果,在主线程更新 UI。
+    """
+    # 信号: (cls_value:str|None, source:str)
+    result_ready = pyqtSignal(object, str)
+
+    def __init__(self, frame, detector, class_icon_detector):
+        super().__init__()
+        # frame 副本(避免与主线程竞争)
+        self._frame = frame.copy() if frame is not None else None
+        self._detector = detector
+        self._class_icon_detector = class_icon_detector
+
+    def run(self):
+        if self._frame is None or self._frame.size == 0:
+            return
+        frame = self._frame
+        try:
+            from class_icon_detector import (
+                crop_right_panel,
+                detect_class_from_attributes,
+            )
+            from class_recommender import (
+                detect_class_from_character_name,
+                detect_class_from_text,
+            )
+
+            # 策略0: 角色名 OCR
+            if self._detector.ocr:
+                try:
+                    import cv2 as _cv2
+                    _h, _w = frame.shape[:2]
+                    _small = _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
+                                         interpolation=_cv2.INTER_AREA)
+                    _name_text = self._detector.ocr.extract_text(_small) or ""
+                    name_cls, ambiguous = detect_class_from_character_name(_name_text)
+                    if name_cls is not None and not ambiguous:
+                        logger.info(f"[ClassWorker] 角色名映射命中 -> {name_cls.value}")
+                        self.result_ready.emit(name_cls, 'char_name')
+                        return
+                except Exception as e:
+                    logger.debug(f"[ClassWorker] 角色名映射失败: {e}")
+
+            # 策略1: 职业图标识别(含技能栏)
+            cls = self._class_icon_detector.detect_class(frame)
+            if cls is not None:
+                source = getattr(self._class_icon_detector, 'last_detect_source', None) or 'icon'
+                logger.info(f"[ClassWorker] 图标识别命中 -> {cls.value} ({source})")
+                self.result_ready.emit(cls, source)
+                return
+
+            # 策略2: 右侧面板主属性 OCR
+            if self._detector.ocr:
+                right_panel = crop_right_panel(frame, ratio=0.45)
+                if right_panel is not None:
+                    try:
+                        panel_text = self._detector.ocr.extract_text(right_panel)
+                        if panel_text:
+                            cls = detect_class_from_attributes(panel_text)
+                            if cls is not None:
+                                logger.info(f"[ClassWorker] 主属性命中 -> {cls.value}")
+                                self.result_ready.emit(cls, 'attribute_ocr')
+                                return
+                    except Exception as e:
+                        logger.debug(f"[ClassWorker] 右侧面板 OCR 失败: {e}")
+
+            # 策略3: OCR 关键词兜底
+            if self._detector.ocr:
+                import cv2
+                h, w = frame.shape[:2]
+                for region_name, region in [
+                    ('top', frame[:h // 4, :]),
+                    ('center', frame[h // 5: h * 4 // 5, w // 6: w * 5 // 6]),
+                ]:
+                    try:
+                        text = self._detector.ocr.extract_text(region)
+                        if text:
+                            cls = detect_class_from_text(text)
+                            if cls is not None:
+                                logger.info(f"[ClassWorker] {region_name} 关键词命中 -> {cls.value}")
+                                self.result_ready.emit(cls, f'{region_name}_ocr')
+                                return
+                    except Exception as e:
+                        logger.debug(f"[ClassWorker] {region_name} OCR 失败: {e}")
+
+            logger.info("[ClassWorker] 所有职业识别策略都未命中")
+            self.result_ready.emit(None, 'none')
+        except Exception as e:
+            logger.warning(f"[ClassWorker] 职业识别失败: {e}", exc_info=True)
+            self.result_ready.emit(None, 'error')
+
+
 class GuideWidget(QWidget):
     """指引显示组件"""
 
@@ -2063,16 +2158,18 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._do_class_ocr)
 
     def _do_class_ocr(self):
-        """执行职业自动识别（多策略：图标匹配 → 右侧面板属性 OCR → 全屏关键词 OCR 兜底）"""
+        """触发职业自动识别(后台线程执行,避免 GUI 假死)
+
+        原实现在主线程做 5+ 次 OCR / Vision 查询,耗时 5-15 秒,期间窗口无响应。
+        现改为:主线程只准备 frame,启动 ClassDetectWorker 子线程执行所有重操作,
+        通过 result_ready 信号回主线程更新 UI。
+        """
         logger.info("触发职业自动识别")
         try:
-            import cv2
-
             # 优先复用场景检测时截到的帧(避免画面切换时重新截图导致 dxcam 崩溃)
             frame = getattr(self, '_last_scene_frame', None)
-            if frame is not None and frame.size > 0:
-                logger.info(f"复用场景检测帧: shape={frame.shape}")
-            else:
+            if frame is None or frame.size == 0:
+                # 无缓存帧时回退到截图(主线程,但只截一次)
                 sc = self.detector.screen_capture if self.detector else None
                 if sc is None:
                     return
@@ -2087,120 +2184,41 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
                 if frame is None:
-                    import mss
-                    import numpy as np
-                    mon = sc.game_monitor
-                    if mon:
-                        try:
-                            with mss.MSS() as sct:
-                                sct_img = sct.grab(mon)
-                                frame = np.array(sct_img)
-                                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                        except Exception:
-                            pass
-                if frame is None or frame.size == 0:
                     frame = sc.capture_full_screen(max_size=0)
                 if frame is None or frame.size == 0:
                     return
 
-            from class_icon_detector import (
-                ClassIconDetector,
-                crop_right_panel,
-                detect_class_from_attributes,
-            )
-
-            # ===== 策略0: 角色名 OCR → 职业映射（最可靠，本机已知角色）=====
-            # 角色选择界面/游戏内若能 OCR 到已知角色名，直接定职业。
-            if self.detector.ocr:
-                try:
-                    from class_recommender import detect_class_from_character_name
-                    import cv2 as _cv2
-                    _h, _w = frame.shape[:2]
-                    _small = _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
-                                         interpolation=_cv2.INTER_AREA)
-                    _name_text = self.detector.ocr.extract_text(_small) or ""
-                    name_cls, ambiguous = detect_class_from_character_name(_name_text)
-                    if name_cls is not None and not ambiguous:
-                        logger.info(f"角色名映射命中 -> {name_cls.value}")
-                        self._set_class_directly(name_cls, source='char_name')
-                        return
-                    if name_cls is not None and ambiguous:
-                        logger.info(f"角色名重名命中({name_cls.value}),交由图标/属性消歧")
-                except Exception as e:
-                    logger.debug(f"角色名映射失败: {e}")
-
-            # ===== 策略1: 职业图标识别（主） =====
+            # 初始化职业图标检测器(主线程,轻量)
             if not hasattr(self, '_class_icon_detector'):
+                from class_icon_detector import ClassIconDetector
                 self._class_icon_detector = ClassIconDetector(
                     sdk=self.detector.sdk if self.detector.sdk_available else None,
                     instance_id=self.detector.instance_id,
                 )
-            cls = self._class_icon_detector.detect_class(frame)
-            if cls is not None:
-                source = getattr(self._class_icon_detector, 'last_detect_source', None) or 'icon'
-                self._set_class_directly(cls, source=source)
+
+            # 避免并发:若上一次识别还在跑,跳过本次
+            prev = getattr(self, '_class_detect_worker', None)
+            if prev is not None and prev.isRunning():
+                logger.info("上一次职业识别仍在进行,跳过本次")
                 return
 
-            # ===== 策略2: 右侧面板主属性 OCR（辅，识别力量/敏捷/智力等） =====
-            if self.detector.ocr:
-                right_panel = crop_right_panel(frame, ratio=0.45)
-                if right_panel is not None:
-                    try:
-                        panel_text = self.detector.ocr.extract_text(right_panel)
-                        if panel_text:
-                            logger.info(f"右侧面板 OCR: {panel_text[:160]}")
-                            cls = detect_class_from_attributes(panel_text)
-                            if cls is not None:
-                                self._set_class_directly(cls, source='attribute_ocr')
-                                return
-                    except Exception as e:
-                        logger.debug(f"右侧面板 OCR 失败: {e}")
-
-            # ===== 策略3: 顶部 + 全屏 OCR 兜底（识别技能/职业关键词） =====
-            if self.detector.ocr:
-                h, w = frame.shape[:2]
-                # 3a) 顶部区域（包含标题、Tab、角色名等）
-                top_region = frame[:h // 4, :]
-                try:
-                    top_text = self.detector.ocr.extract_text(top_region)
-                    if top_text:
-                        logger.info(f"顶部 OCR 文本: {top_text[:120]}")
-                        cls = detect_class_from_text(top_text)
-                        if cls is not None:
-                            self._set_class_directly(cls, source='top_ocr')
-                            return
-                except Exception as e:
-                    logger.debug(f"顶部 OCR 失败: {e}")
-                # 3b) 中央区域（主要内容区，装备/技能描述）
-                center_region = frame[h // 5: h * 4 // 5, w // 6: w * 5 // 6]
-                try:
-                    center_text = self.detector.ocr.extract_text(center_region)
-                    if center_text:
-                        logger.info(f"中央区域 OCR: {center_text[:120]}")
-                        cls = detect_class_from_text(center_text)
-                        if cls is not None:
-                            self._set_class_directly(cls, source='center_ocr')
-                            return
-                except Exception as e:
-                    logger.debug(f"中央区域 OCR 失败: {e}")
-                # 3c) 全屏兜底（低分辨率缩放到一半，提高 OCR 速度和识别率）
-                try:
-                    import numpy as _np
-                    small_h, small_w = max(h // 2, 540), max(w // 2, 960)
-                    small = cv2.resize(frame, (small_w, small_h), interpolation=cv2.INTER_AREA)
-                    full_text = self.detector.ocr.extract_text(small)
-                    if full_text:
-                        logger.info(f"全屏 OCR: {full_text[:200]}")
-                        cls = detect_class_from_text(full_text)
-                        if cls is not None:
-                            self._set_class_directly(cls, source='full_ocr')
-                            return
-                except Exception as e:
-                    logger.debug(f"全屏 OCR 失败: {e}")
-
-            logger.info("所有职业识别策略都未命中，保持未识别状态")
+            # 启动后台线程执行 OCR / Vision 查询
+            self._class_detect_worker = ClassDetectWorker(
+                frame=frame,
+                detector=self.detector,
+                class_icon_detector=self._class_icon_detector,
+            )
+            self._class_detect_worker.result_ready.connect(self._on_class_detect_result)
+            self._class_detect_worker.start()
         except Exception as e:
-            logger.warning(f"职业自动识别失败: {e}", exc_info=True)
+            logger.warning(f"启动职业识别失败: {e}", exc_info=True)
+
+    def _on_class_detect_result(self, cls, source: str):
+        """ClassDetectWorker 完成后的回调(主线程,可安全更新 UI)"""
+        if cls is not None:
+            self._set_class_directly(cls, source=source)
+        else:
+            logger.info(f"职业识别未命中 (source={source})")
 
     def _ensure_skill_webview(self):
         """在技能Tab里 lazy 创建内嵌 d2core 构筑网页器(WebOverlay embedded模式)"""
