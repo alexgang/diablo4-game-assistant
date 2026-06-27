@@ -1,105 +1,90 @@
+# 环境变量(包含 API Key,不要提交)
+.env
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.Python
 *.egg-info/
 dist/
-/build/
-.eggs/
+build/
 
-.venv/
+# 虚拟环境
 venv/
 env/
-TraeAI-3/
+.venv/
+pylibs/
 
-cache/
-*.json
-!MeloTTS.cpp-multilang-develop/ov_models/zh_config.json
-!MeloTTS.cpp-multilang-develop/ov_models/mini-bart-g2p-no_cache/*.json
-
-.env
-*.log
-
+# IDE
 .idea/
 .vscode/
+.vs/
 *.swp
 *.swo
 
-.DS_Store
-Thumbs.db
-
-resources/images/
-resources/data/
-
-*.zip
-*.tar
-*.tar.gz
-*.7z
-*.msi
-*.wav
-*.mp3
-*.mp4
-*.avi
-*.mkv
-
-*.exe
-!PaddleOCR_OpenVINO_CPP-main/build/Release/reader.exe
-!MeloTTS.cpp-multilang-develop/build/Release/meloTTS_ov.exe
-
-*.pdiparams
-!PaddleOCR_OpenVINO_CPP-main/models/**/*.pdiparams
-*.pdiparams.info
-!PaddleOCR_OpenVINO_CPP-main/models/**/*.pdiparams.info
-*.pdmodel
-!PaddleOCR_OpenVINO_CPP-main/models/**/*.pdmodel
-*.onnx
-
-*.bin
-!MeloTTS.cpp-multilang-develop/ov_models/**/*.bin
-*.xml
-!MeloTTS.cpp-multilang-develop/ov_models/**/*.xml
-*.raw
-!MeloTTS.cpp-multilang-develop/ov_models/cppinyin/cpp_pinyin.raw
-*.pickle
-
-bart_cache/
-pip_packages/
-
-PaddleOCR_OpenVINO_CPP-main/build/*
-!PaddleOCR_OpenVINO_CPP-main/build/Release/
-PaddleOCR_OpenVINO_CPP-main/build/Release/*
-!PaddleOCR_OpenVINO_CPP-main/build/Release/reader.exe
-
-MeloTTS.cpp-multilang-develop/build/*
-!MeloTTS.cpp-multilang-develop/build/Release/
-MeloTTS.cpp-multilang-develop/build/Release/*
-!MeloTTS.cpp-multilang-develop/build/Release/meloTTS_ov.exe
-
-MeloTTS.cpp-multilang-develop/thirdParty/libtorch.tar.gz
-MeloTTS.cpp-multilang-develop/benchmark/
-MeloTTS.cpp-multilang-develop/experimental/
-
-ocr_result.jpg
-opencv-*
-
-workshop/
-
-_*.png
-_*.py
-_*.bat
-_*.ps1
-_*.txt
-*.bmp
+# 日志和缓存
+*.log
+cache/
+.webengine_data/
 kernel.errors.txt
-pylibs/
-3/
+
+# 二进制/可执行文件(不进版本库,体积大)
+ffmpeg.exe
+*.exe
+
+# 第三方包(不进版本库)
 GamingAssistant Package/
-.vs/
-*.png
-!game_screenshots/*.png
-game_screenshots/printwindow_test.png
-game_screenshots/test_*.png
-game_screenshots/dxcam_test.png
-game_screenshots/_*.png
-game_screenshots/*icon_*.png
-game_screenshots/my_*.png
+
+# 游戏截图(调试用,全部忽略)
+game_screenshots/
+
+# 临时调试文件(下划线开头)
+_tmp_*
+_*.png
+_*.wav
+_*.txt
+_test_*
+_debug_*
+_extract_*
+_fix_*
+_list_*
+_query_*
+_rebuild_*
+_trace_*
+
+# 测试输出文件
+test_output.wav
+tts_demo.wav
+assistant_window.png
+barb_d2c.png
+cal.png
+charsel_test.png
+css_before_after.png
+d2c_rogue_test.png
+full_screenshot.png
+gui_active.png
+gui_running.png
+gui_test_screenshot.png
+live_game_capture.png
+monitor1_crop.png
+monitor2_crop.png
+necro_d2c.png
+rogue_shot.png
+scene_assistant_running.png
+skill_tree_preview.png
+skill_tree_screenshot.png
+sorc_d2c.png
+
+# 构建脚本(临时)
+_build_*
+
+# 视频资源(体积大)
+video_assets/
+
+# 资源文件夹(按需手动添加)
+resources/
+
+# class icon templates(调试生成)
+class_icon_templates/

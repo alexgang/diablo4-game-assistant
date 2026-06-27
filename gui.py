@@ -95,6 +95,26 @@ except ImportError:
     VOICE_AVAILABLE = False
 
 try:
+    from quest_guide_webview import QuestGuideWebView
+    QUEST_GUIDE_AVAILABLE = True
+except ImportError:
+    QuestGuideWebView = None
+    QUEST_GUIDE_AVAILABLE = False
+
+try:
+    from quest_guide_config import (
+        SIDE_QUESTS, MAIN_QUESTS, BEGINNER_GUIDES, SEASON_GUIDES,
+        search_guide, GAMERSKY_D4_HOME,
+    )
+    QUEST_CONFIG_OK = True
+except ImportError:
+    QUEST_CONFIG_OK = False
+    SIDE_QUESTS = {}
+    MAIN_QUESTS = {}
+    BEGINNER_GUIDES = {}
+    SEASON_GUIDES = {}
+
+try:
     from hotkey_manager import HotkeyManager
     HOTKEY_AVAILABLE = True
 except ImportError:
@@ -848,6 +868,30 @@ class MainWindow(QMainWindow):
         search_action = menu_search.addAction("🔍 搜索游戏内容")
         search_action.triggered.connect(self._menu_search)
 
+        # 攻略菜单(游民星空图文攻略)
+        menu_guide = menubar.addMenu("攻略")
+        # 支线任务子菜单(按区域)
+        menu_side = menu_guide.addMenu("📋 支线任务")
+        for name in SIDE_QUESTS:
+            menu_side.addAction(name, lambda n=name: self._load_quest_guide(n))
+        # 主线/DLC子菜单
+        menu_main = menu_guide.addMenu("⚔ 主线/DLC")
+        for name in MAIN_QUESTS:
+            menu_main.addAction(name, lambda n=name: self._load_quest_guide(n))
+        # 新手指南子菜单
+        menu_beginner = menu_guide.addMenu("🎓 新手指南")
+        for name in BEGINNER_GUIDES:
+            menu_beginner.addAction(name, lambda n=name: self._load_quest_guide(n))
+        # 赛季攻略子菜单
+        menu_season = menu_guide.addMenu("🏆 赛季攻略")
+        for name in SEASON_GUIDES:
+            menu_season.addAction(name, lambda n=name: self._load_quest_guide(n))
+        menu_guide.addSeparator()
+        menu_guide.addAction("🔍 搜索攻略", self._menu_search_guide)
+        menu_guide.addAction("🏠 攻略首页", lambda: self._load_quest_guide_url(GAMERSKY_D4_HOME))
+        menu_guide.addAction("◀ 后退", self._guide_go_back)
+        menu_guide.addAction("▶ 前进", self._guide_go_forward)
+
         # === Tabs（保留创建所有 tab 内容，隐藏 Tab 栏，最大化展示区域）===
         self.tabs = QTabWidget()
         self.tabs.setFont(_ff('Microsoft YaHei', 10, QFont.Bold))
@@ -877,6 +921,11 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()
         layout.addWidget(self.tabs, 1)
 
+        # 默认显示攻略 Tab(index=5),并预加载攻略网页
+        if self.tabs.count() > 5:
+            self.tabs.setCurrentIndex(5)
+            self._ensure_guide_webview()
+
         self.dragging = False
         self.drag_position = None
 
@@ -886,6 +935,93 @@ class MainWindow(QMainWindow):
         if ok and text:
             self.search_input.setText(text)
             self.manual_search()
+
+    # ============ 任务图文攻略相关方法 ============
+
+    def _ensure_guide_webview(self):
+        """懒加载攻略网页组件。首次调用时创建并替换占位符。"""
+        if self._guide_webview is not None:
+            return self._guide_webview
+        if not QUEST_GUIDE_AVAILABLE or QuestGuideWebView is None:
+            logger.warning("QuestGuideWebView 模块不可用")
+            return None
+        # 移除占位符
+        if self._guide_web_placeholder is not None:
+            self._guide_web_placeholder.setParent(None)
+            self._guide_web_placeholder.deleteLater()
+            self._guide_web_placeholder = None
+        # 创建嵌入式攻略网页
+        self._guide_webview = QuestGuideWebView(self.tab_guide)
+        # 找到 guide_layout 并添加(布局在 _create_scene_tabs 里创建)
+        layout = self.tab_guide.layout()
+        if layout is not None:
+            layout.addWidget(self._guide_webview, 1)
+        logger.info("QuestGuideWebView 已创建")
+        return self._guide_webview
+
+    def _switch_to_guide_tab(self):
+        """切换到攻略 Tab(index=5)"""
+        if self.tabs.count() > 5:
+            self.tabs.setCurrentIndex(5)
+
+    def _load_quest_guide(self, name):
+        """按名称加载攻略并切换到攻略 Tab"""
+        wv = self._ensure_guide_webview()
+        if wv is None:
+            QMessageBox.warning(self, "不可用", "攻略网页组件不可用,请检查 PyQtWebEngine 安装")
+            return
+        ok = wv.load_guide(name)
+        if ok:
+            self.guide_top_bar.setText(f"📖 攻略: {name}")
+            self._switch_to_guide_tab()
+        else:
+            QMessageBox.warning(self, "未找到", f"找不到攻略: {name}")
+
+    def _load_quest_guide_url(self, url):
+        """按 URL 加载攻略并切换到攻略 Tab"""
+        wv = self._ensure_guide_webview()
+        if wv is None:
+            QMessageBox.warning(self, "不可用", "攻略网页组件不可用,请检查 PyQtWebEngine 安装")
+            return
+        wv.load_url(url)
+        self.guide_top_bar.setText("📖 攻略: 游民星空")
+        self._switch_to_guide_tab()
+
+    def _menu_search_guide(self):
+        """通过菜单搜索攻略弹窗"""
+        text, ok = QInputDialog.getText(self, "搜索攻略", "输入任务名/区域名/关键词:")
+        if not ok or not text:
+            return
+        wv = self._ensure_guide_webview()
+        if wv is None:
+            QMessageBox.warning(self, "不可用", "攻略网页组件不可用")
+            return
+        results = search_guide(text)
+        if results:
+            name, info = results[0]
+            wv.load_url(info['url'])
+            self.guide_top_bar.setText(f"📖 攻略: {name}")
+            self._switch_to_guide_tab()
+            if len(results) > 1:
+                QMessageBox.information(
+                    self, "找到多个匹配",
+                    f"共 {len(results)} 个匹配,已加载第一个:\n{name}\n\n其他匹配: " +
+                    "、".join(n for n, _ in results[1:5])
+                )
+        else:
+            QMessageBox.information(self, "无结果", f"未找到匹配 '{text}' 的攻略\n已加载专区首页")
+            wv.go_home()
+            self._switch_to_guide_tab()
+
+    def _guide_go_back(self):
+        """攻略网页后退"""
+        if self._guide_webview is not None:
+            self._guide_webview.go_back()
+
+    def _guide_go_forward(self):
+        """攻略网页前进"""
+        if self._guide_webview is not None:
+            self._guide_webview.go_forward()
 
     def _create_scene_tabs(self):
         """创建场景 Tab：战斗 / 装备 / 技能 / 地图"""
@@ -1095,6 +1231,38 @@ class MainWindow(QMainWindow):
         map_layout.addWidget(self.map_info)
         self.tabs.addTab(self.tab_map, "🗺 地图")
 
+        # ============== Tab 5: 攻略（游民星空图文攻略）==============
+        self.tab_guide = QWidget()
+        guide_layout = QVBoxLayout(self.tab_guide)
+        guide_layout.setContentsMargins(0, 0, 0, 0)
+        guide_layout.setSpacing(0)
+        # 攻略顶部信息栏
+        self.guide_top_bar = QLabel("📖 任务图文攻略 - 游民星空")
+        self.guide_top_bar.setStyleSheet(
+            "color: #ff6b35; background-color: rgba(20,20,40,200); "
+            "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+            "border-bottom: 1px solid rgba(139,0,0,0.4);"
+        )
+        guide_layout.addWidget(self.guide_top_bar)
+        # 嵌入式攻略网页(lazy 创建)
+        self._guide_webview = None
+        self._guide_web_placeholder = QLabel(
+            "📖 任务图文攻略\n\n"
+            "通过菜单「攻略」选择分类:\n"
+            "  • 支线任务(按区域)\n"
+            "  • 主线/DLC流程\n"
+            "  • 新手指南\n"
+            "  • 赛季攻略\n\n"
+            "或通过菜单「搜索」输入任务名查找"
+        )
+        self._guide_web_placeholder.setAlignment(Qt.AlignCenter)
+        self._guide_web_placeholder.setStyleSheet(
+            "color: #999; padding: 40px; font-size: 13px; "
+            "background-color: rgba(0,0,0,0.3);"
+        )
+        guide_layout.addWidget(self._guide_web_placeholder, 1)
+        self.tabs.addTab(self.tab_guide, "📖 攻略")
+
     def _start_scene_vision_worker(self):
         """启动后台 Vision 场景识别（5秒/次）
 
@@ -1138,7 +1306,7 @@ class MainWindow(QMainWindow):
         if des_curr is None:
             return []
         bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        best = None
+        scores = []
         for scene_id, pic_id, tpl_path in templates:
             if not os.path.exists(tpl_path):
                 continue
@@ -1153,19 +1321,42 @@ class MainWindow(QMainWindow):
                 continue
             good = [m for m in matches if m.distance < 50]
             score = len(good) / max(len(matches), 1)
-            logger.debug(
+            logger.info(
                 f'ORB {scene_id}: total={len(matches)} good={len(good)} score={score:.3f}'
             )
-            if best is None or score > best[0]:
-                best = (score, scene_id, pic_id)
-        if best and best[0] > 0.3:
-            return [{
-                'scene_id': best[1],
-                'picture_id': best[2],
-                'score': best[0],
-                'mode': 'orb',
-            }]
-        return []
+            scores.append((score, scene_id, pic_id, len(good)))
+
+        if not scores:
+            return []
+
+        # 按得分排序(高→低)
+        scores.sort(key=lambda x: x[0], reverse=True)
+        top = scores[0]
+
+        # 过滤条件1: 最高分必须 > 0.55 且 good match >= 30
+        if top[0] <= 0.55 or top[3] < 30:
+            logger.info(
+                f'ORB 兜底: 最高分 {top[0]:.3f} (good={top[3]}) 未达阈值(>0.55, good>=30),不返回'
+            )
+            return []
+
+        # 过滤条件2: 最高分和次高分差距必须 > 0.12(避免相似界面误判)
+        if len(scores) > 1:
+            second = scores[1]
+            gap = top[0] - second[0]
+            if gap < 0.12:
+                logger.info(
+                    f'ORB 兜底: 最高分 {top[0]:.3f}({top[1]}) 与次高分 {second[0]:.3f}({second[1]}) '
+                    f'差距 {gap:.3f} < 0.12, 无法可靠区分,不返回'
+                )
+                return []
+
+        return [{
+            'scene_id': top[1],
+            'picture_id': top[2],
+            'score': top[0],
+            'mode': 'orb',
+        }]
 
     def _do_scene_detect(self):
         """主线程执行一次场景检测（截图+缩放+Vision 查询）
@@ -1221,6 +1412,9 @@ class MainWindow(QMainWindow):
                 logger.info("Vision 检测: 截图失败（可能游戏窗口未找到）")
                 return
 
+            # 保存原始分辨率 frame 供 QuestOCR 使用(缩放后中文文字会模糊,OCR 识别效果差)
+            original_frame = frame
+
             # 2. 缩放到 1920 宽度（保持宽高比），实测 1920 宽度匹配得分 0.999+
             VISION_TARGET_WIDTH = 1920
             h, w = frame.shape[:2]
@@ -1241,23 +1435,29 @@ class MainWindow(QMainWindow):
 
             # 4. Vision 查询（优先 accurate 模式，因为索引是用 accurate 建的）
             # threshold=-1 不限，topk=5 返回多候选以便 client 端二次过滤
-            results = self.detector.sdk.vision_query(
-                self.detector.instance_id,
-                tmp_path,
-                topk=5,
-                threshold=-1,
-                threshold_2=-1,
-                mode='accurate',
-            )
-            if not results:
+            results = []
+            try:
                 results = self.detector.sdk.vision_query(
                     self.detector.instance_id,
                     tmp_path,
                     topk=5,
                     threshold=-1,
                     threshold_2=-1,
-                    mode='basic',
+                    mode='accurate',
                 )
+                if not results:
+                    results = self.detector.sdk.vision_query(
+                        self.detector.instance_id,
+                        tmp_path,
+                        topk=5,
+                        threshold=-1,
+                        threshold_2=-1,
+                        mode='basic',
+                    )
+            except Exception as ve:
+                # Vision 查询异常(instance 未 build/服务不可用),走 ORB 兜底
+                logger.warning(f"[Vision] SDK查询异常,走ORB兜底: {ve}")
+                results = []
             logger.info(f"[Vision] SDK查询结果: {results[:3] if results else '空'}")
             if not results:
                 # 兜底：ORB 模板匹配（更适合 D4 动态画面）
@@ -1276,6 +1476,9 @@ class MainWindow(QMainWindow):
                 logger.info("Vision 查询: 无匹配结果")
                 self.scene_info_label.setText("当前场景: -- (未识别)")
                 self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+
+                # 场景未识别时,尝试 OCR 右侧任务追踪面板识别任务名 -> 自动加载攻略
+                self._try_ocr_quest_guide(original_frame)
                 return
 
             # 5. 选择得分最高且 >= 0.3 的匹配
@@ -1299,8 +1502,154 @@ class MainWindow(QMainWindow):
             logger.info("Vision 查询: 匹配得分均 < 0.3")
             self.scene_info_label.setText("当前场景: -- (未识别)")
             self.scene_info_label.setStyleSheet("color: #aaa; background-color: transparent;")
+
+            # 场景未识别时,尝试 OCR 右侧任务追踪面板识别任务名 -> 自动加载攻略
+            self._try_ocr_quest_guide(original_frame)
+
         except Exception as e:
             logger.error(f"Vision 主线程检测异常: {e}")
+
+    def _try_ocr_quest_guide(self, frame):
+        """OCR 识别游戏右侧任务追踪面板的任务名,匹配到攻略则自动加载
+
+        D4 右侧任务追踪面板位置(MCP 实测 2560x1600):
+          x=2200 y=380 w=320 h=130 (任务名在上部,描述在下部)
+          比例: x=86% y=24% w=12.5% h=8%
+        适当扩大边距确保完整覆盖不同任务文本
+        """
+        if not self.detector or not self.detector.ocr_available:
+            return
+        try:
+            import cv2
+            import time as _t
+            # 节流:10 秒内不重复 OCR(避免频繁识别)
+            if _t.time() - getattr(self, '_last_quest_ocr_time', 0) < 10:
+                return
+            self._last_quest_ocr_time = _t.time()
+
+            h, w = frame.shape[:2]
+            # 右侧任务追踪面板区域(按比例,MCP 实测 2560x1600)
+            # 实测: x=2200-2520 y=380-510 (含任务名+描述)
+            # 比例: x=86%-98% y=24%-32%,适当扩大边距
+            x1 = int(w * 0.84)
+            y1 = int(h * 0.22)
+            x2 = int(w * 0.99)
+            y2 = int(h * 0.36)
+            quest_region = frame[y1:y2, x1:x2]
+            if quest_region.size == 0:
+                return
+
+            logger.info(f"[QuestOCR] 开始识别右侧任务面板,区域 shape={quest_region.shape}")
+
+            # OCR 识别:尝试多种预处理,取识别到文字的那个
+            text = ''
+            for preprocess in ['dark', 'high_contrast', 'auto']:
+                try:
+                    t = self.detector.ocr.extract_text(quest_region, preprocess=preprocess)
+                    t = t.strip()
+                    if t and len(t) >= 2:
+                        text = t
+                        logger.info(f"[QuestOCR] preprocess={preprocess} 识别到文字: '{text}'")
+                        break
+                    else:
+                        logger.info(f"[QuestOCR] preprocess={preprocess} 无有效文字: '{t}'")
+                except Exception as oe:
+                    logger.warning(f"[QuestOCR] preprocess={preprocess} 异常: {oe}")
+
+            text = text.strip()
+            logger.info(f"[QuestOCR] 最终识别文字: '{text}'")
+
+            if not text or len(text) < 2:
+                return
+
+            # 匹配攻略关键词
+            from quest_guide_config import search_guide
+            results = search_guide(text)
+            if results:
+                name, info = results[0]
+                # 避免重复加载同一个攻略
+                last_loaded = getattr(self, '_last_loaded_quest', None)
+                if last_loaded == name:
+                    return
+                self._last_loaded_quest = name
+                logger.info(f"[QuestOCR] 任务 '{text}' 匹配攻略: {name}")
+                # 自动加载攻略(不切换 Tab,只在攻略顶部栏提示)
+                wv = self._ensure_guide_webview()
+                if wv is not None:
+                    wv.load_url(info['url'])
+                    self.guide_top_bar.setText(
+                        f"📖 攻略: {name} (任务识别: {text[:20]})"
+                    )
+                    self.guide_top_bar.setStyleSheet(
+                        "color: #4ade80; background-color: rgba(20,40,20,200); "
+                        "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                        "border-bottom: 1px solid rgba(0,139,0,0.4);"
+                    )
+            else:
+                logger.info(f"[QuestOCR] 文字 '{text}' 未匹配到攻略库,调用在线搜索+LLM汇总")
+                # 避免重复在线搜索同样的文字
+                last_online = getattr(self, '_last_online_search', None)
+                if last_online == text:
+                    return
+                self._last_online_search = text
+                # 游民星空攻略库未匹配,启动后台 Bing 搜索 + 智谱 GLM 汇总
+                wv = self._ensure_guide_webview()
+                if wv is not None:
+                    wv.search_online(text)
+                    # 显示"搜索中"状态(橙色),搜索完成后由定时器更新为结果
+                    self.guide_top_bar.setText(
+                        f"🔍 搜索中: {text[:20]} (Bing + GLM 汇总中...)"
+                    )
+                    self.guide_top_bar.setStyleSheet(
+                        "color: #ffa500; background-color: rgba(50,35,15,200); "
+                        "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                        "border-bottom: 1px solid rgba(200,120,0,0.4);"
+                    )
+                    # 启动定时器检查搜索结果(每 1.5 秒检查一次,最多 20 秒)
+                    self._check_online_result_text = text
+                    self._online_check_count = 0
+                    if not hasattr(self, '_online_check_timer'):
+                        from PyQt5.QtCore import QTimer as _QTimer
+                        self._online_check_timer = _QTimer()
+                        self._online_check_timer.timeout.connect(
+                            self._check_online_search_result
+                        )
+                    self._online_check_timer.start(1500)
+        except Exception as e:
+            logger.warning(f"QuestOCR 异常: {e}", exc_info=True)
+
+    def _check_online_search_result(self):
+        """定时检查在线搜索结果,更新顶部栏提示"""
+        self._online_check_count += 1
+        # 超时(20 秒)则停止检查
+        if self._online_check_count > 14:
+            self._online_check_timer.stop()
+            return
+
+        wv = getattr(self, '_guide_webview', None)
+        if wv is None:
+            self._online_check_timer.stop()
+            return
+
+        # 检查 webview 是否已加载新 URL(搜索完成的标志)
+        summary = getattr(wv, '_online_summary', None)
+        title = getattr(wv, '_online_title', None)
+        text = getattr(self, '_check_online_result_text', '')
+
+        if summary is not None and title is not None:
+            # 搜索完成,显示 LLM 汇总结果(蓝色)
+            self.guide_top_bar.setText(
+                f"🔍 LLM 汇总: {title[:30]} | {summary[:30]} (任务: {text[:15]})"
+            )
+            self.guide_top_bar.setStyleSheet(
+                "color: #00bfff; background-color: rgba(20,30,50,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(0,100,200,0.4);"
+            )
+            self._online_check_timer.stop()
+            # 清除标记,避免下次误判
+            wv._online_summary = None
+            wv._online_title = None
 
     def _on_scene_detected(self, result):
         """Vision 场景识别结果回调"""
@@ -1361,6 +1710,24 @@ class MainWindow(QMainWindow):
             wv = self._ensure_skill_webview()
             if wv is not None:
                 wv.switch_inner_tab(inner_tab_map[category])
+
+        # 地图场景:提示用户可通过菜单查看任务攻略
+        if category == SceneCategory.MAP:
+            self.guide_top_bar.setText(
+                "📖 攻略 - 识别到地图场景,可通过菜单「攻略」查看对应区域任务"
+            )
+            self.guide_top_bar.setStyleSheet(
+                "color: #4ade80; background-color: rgba(20,20,40,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(139,0,0,0.4);"
+            )
+        else:
+            self.guide_top_bar.setText("📖 任务图文攻略 - 游民星空")
+            self.guide_top_bar.setStyleSheet(
+                "color: #ff6b35; background-color: rgba(20,20,40,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(139,0,0,0.4);"
+            )
 
         color = get_category_color(category)
         self.tabs.tabBar().setStyleSheet(
@@ -2041,6 +2408,30 @@ class MainWindow(QMainWindow):
     def _on_voice_result(self, result):
         """处理语音识别结果"""
         self.guide_widget.update_voice_result(result)
+
+        # 语音查询任务攻略:识别文字包含攻略/任务相关关键词时,自动搜索并切换到攻略 Tab
+        text = result.get('text', '')
+        if text:
+            quest_keywords = [
+                '攻略', '任务', '支线', '主线', 'dlc', '剧情',
+                '破碎', '索格伦', '干燥', '凯吉斯坦', '哈维泽', '三神教',
+                '奶牛', '地狱狂潮', '声望', '低语', '秘语',
+                '新手', '入门', '快捷键', '属性', '增伤', '技能树',
+                '调谐石', '协调石', '战争计划', '暗金', '套装', '魔盒',
+                '创世', '编年史',
+            ]
+            text_lower = text.lower()
+            if any(kw in text_lower for kw in quest_keywords):
+                # 尝试搜索攻略
+                results = search_guide(text)
+                if results:
+                    name, info = results[0]
+                    wv = self._ensure_guide_webview()
+                    if wv is not None:
+                        wv.load_url(info['url'])
+                        self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
+                        self._switch_to_guide_tab()
+                        logger.info(f"语音触发攻略: '{text}' → {name}")
 
         if result.get('spoken'):
             self.voice_speak_btn.setText("🔊 播报中...")

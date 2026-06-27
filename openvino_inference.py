@@ -31,14 +31,22 @@ class OpenVINOInferenceEngine:
         self.compiled_models = {}
         self.infer_requests = {}
 
-    def load_model(self, name, model_path, weights_path=None):
-        """加载模型"""
+    def load_model(self, name, model_path, weights_path=None, device=None):
+        """加载模型
+
+        Args:
+            name: 模型名称
+            model_path: 模型路径
+            weights_path: 权重路径(可选)
+            device: 指定设备(如 'NPU'/'CPU'/'GPU'),为 None 则用 self.device
+        """
+        target_device = device or self.device
         if weights_path:
             model = self.core.read_model(model=model_path, weights=weights_path)
         else:
             model = self.core.read_model(model=model_path)
         self.models[name] = model
-        compiled = self.core.compile_model(model, self.device)
+        compiled = self.core.compile_model(model, target_device)
         self.compiled_models[name] = compiled
         self.infer_requests[name] = compiled.create_infer_request()
         return compiled
@@ -68,7 +76,14 @@ class PaddleOCREngine(OpenVINOInferenceEngine):
         self._load_characters()
 
     def _load_models(self):
-        """加载 OCR 模型"""
+        """加载 OCR 模型
+
+        NPU 部署策略(NPU 设备时):
+          - det(检测)模型含动态 Interpolate 算子,NPU 编译器不支持,留 CPU
+          - cls(方向分类)模型较小,留 CPU
+          - rec(识别)模型是主力耗时的,NPU 加速收益最大
+        这样既享受 NPU 加速,又避免 det 模型编译失败。
+        """
         det_model = os.path.join(self.model_dir, 'ch_PP-OCRv4_det_infer', 'inference.pdmodel')
         det_params = os.path.join(self.model_dir, 'ch_PP-OCRv4_det_infer', 'inference.pdiparams')
         rec_model = os.path.join(self.model_dir, 'ch_PP-OCRv4_rec_infer', 'inference.pdmodel')
@@ -76,9 +91,21 @@ class PaddleOCREngine(OpenVINOInferenceEngine):
         cls_model = os.path.join(self.model_dir, 'ch_ppocr_mobile_v2.0_cls_infer', 'inference.pdmodel')
         cls_params = os.path.join(self.model_dir, 'ch_ppocr_mobile_v2.0_cls_infer', 'inference.pdiparams')
 
-        self.load_model('det', det_model, det_params)
-        self.load_model('rec', rec_model, rec_params)
-        self.load_model('cls', cls_model, cls_params)
+        # NPU 模式下 det/cls 留 CPU,rec 放 NPU
+        # 非 NPU 模式全部用 self.device
+        if self.device.upper() == 'NPU':
+            self.load_model('det', det_model, det_params, device='CPU')
+            self.load_model('cls', cls_model, cls_params, device='CPU')
+            try:
+                self.load_model('rec', rec_model, rec_params, device='NPU')
+            except Exception as e:
+                # NPU 编译失败时回退到 CPU
+                print(f'[PaddleOCR] rec 模型 NPU 编译失败,回退 CPU: {e}')
+                self.load_model('rec', rec_model, rec_params, device='CPU')
+        else:
+            self.load_model('det', det_model, det_params)
+            self.load_model('rec', rec_model, rec_params)
+            self.load_model('cls', cls_model, cls_params)
 
     def _load_characters(self):
         """加载字符表"""

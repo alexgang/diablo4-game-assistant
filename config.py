@@ -1,5 +1,12 @@
 import os
 
+# 自动加载 .env 文件(包含 API Key 等敏感信息,不入版本库)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
+except ImportError:
+    pass
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 RESOURCES_DIR = os.path.join(BASE_DIR, 'resources')
@@ -23,6 +30,11 @@ OCR_CONFIG = {
     'preprocess': 'auto',
     'cache_ttl': 2.0,
     'min_text_length': 2,
+    # OpenVINO 推理设备: 'AUTO'/'CPU'/'GPU'/'NPU'
+    # 实测 PaddleOCR 模型不兼容 NPU(AvgPool/Interpolate 算子限制),
+    # GPU 首次编译慢(8s)且小模型加速有限,CPU 最稳定。
+    # AUTO 让 OpenVINO 自动选最优设备。
+    'device': 'AUTO',
 }
 
 D4_REGIONS = {
@@ -129,6 +141,17 @@ SDK_CONFIG = {
 
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
+
+# 智谱 GLM LLM 配置(用于在线搜索攻略汇总)
+# API Key 从环境变量 ZHIPU_API_KEY 读取,或直接填入下方
+LLM_CONFIG = {
+    'provider': 'zhipu',
+    'api_key': os.environ.get('ZHIPU_API_KEY', ''),
+    'model': 'glm-4-flash',
+    'base_url': 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    'timeout': 15,
+    'max_search_results': 8,
+}
 
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)

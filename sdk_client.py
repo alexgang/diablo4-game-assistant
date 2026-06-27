@@ -70,7 +70,12 @@ class GamingAssistantSDK:
             logger.warning(f"SDK服务器检查失败: {e}")
             return False
 
-    def init_all(self, instance_id: str) -> None:
+    def init_all(self, instance_id: str) -> int:
+        """初始化所有 SDK 服务。
+
+        Returns:
+            int: 成功初始化的服务数量
+        """
         services = [
             ("vision", self.vision_init),
             ("knowledge", self.knowledge_init),
@@ -78,11 +83,45 @@ class GamingAssistantSDK:
             ("mmr", self.mmr_init),
             ("bar", self.bar_init),
         ]
+        ok_count = 0
         for name, init_fn in services:
             try:
                 init_fn(instance_id)
+                ok_count += 1
             except Exception as e:
-                logger.warning(f"SDK {name} 初始化失败: {e}")
+                msg = str(e)
+                if "has existed" in msg or "already exist" in msg:
+                    # instance 已存在（上次进程未释放），先 destroy 再重试
+                    logger.info(f"SDK {name} instance 已存在,尝试 destroy 后重新 init")
+                    self._destroy_service(name, instance_id)
+                    try:
+                        init_fn(instance_id)
+                        logger.info(f"SDK {name} 重新初始化成功")
+                        ok_count += 1
+                    except Exception as e2:
+                        logger.warning(f"SDK {name} 重新初始化仍失败: {e2}")
+                else:
+                    logger.warning(f"SDK {name} 初始化失败: {e}")
+        return ok_count
+
+    def _destroy_service(self, service: str, instance_id: str) -> bool:
+        """销毁 SDK 服务 instance（用于 instance 冲突时清理）
+
+        Args:
+            service: 服务名 (vision/knowledge/memory/mmr/bar)
+            instance_id: instance ID
+
+        Returns:
+            bool: 是否销毁成功
+        """
+        try:
+            resp = self._post_json(f"/{service}/service/destroy/{instance_id}", {})
+            self._check(resp)
+            logger.info(f"SDK {service} instance 已销毁: {instance_id}")
+            return True
+        except Exception as e:
+            logger.debug(f"SDK {service} destroy 失败(可能不支持): {e}")
+            return False
 
     # ── Vision ──────────────────────────────────────────────────────────
 

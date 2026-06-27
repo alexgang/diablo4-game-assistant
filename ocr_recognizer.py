@@ -26,21 +26,35 @@ _CPP_OCR_MODELS = os.path.join(_CPP_OCR_DIR, 'models')
 _CPP_OCR_LABEL = os.path.join(_CPP_OCR_DIR, 'data', 'ppocr_keys_v1.txt')
 
 
+def _get_default_device():
+    """从 config.py 读取默认 OpenVINO 推理设备"""
+    try:
+        from config import OCR_CONFIG
+        return OCR_CONFIG.get('device', 'AUTO')
+    except ImportError:
+        return 'AUTO'
+
+
 class GameOCR:
     """游戏画面OCR识别 - 多引擎支持"""
 
-    ENGINES = ['openvino_python', 'openvino_cpp', 'paddleocr', 'easyocr', 'tesseract']
+    ENGINES = ['openvino_python', 'openvino_cpp', 'easyocr', 'paddleocr', 'tesseract']
 
-    def __init__(self, engine=None, lang='ch', device='AUTO'):
+    def __init__(self, engine=None, lang='ch', device=None):
         self.lang = lang
         self.engine_name = None
         self.engine = None
         self.tesseract_cmd = None
-        self.device = device
+        # 优先用传入的 device,否则从 config 读取,最后回退 AUTO
+        self.device = device or _get_default_device()
         self._init_engine(engine)
 
     def _init_engine(self, preferred_engine=None):
-        engines_to_try = [preferred_engine] if preferred_engine else self.ENGINES
+        # NPU/GPU 等 Python OpenVINO 设备优先用 openvino_python(才能控制 device)
+        if not preferred_engine and self.device.upper() not in ('AUTO', 'CPU'):
+            engines_to_try = ['openvino_python', 'openvino_cpp', 'easyocr', 'paddleocr', 'tesseract']
+        else:
+            engines_to_try = [preferred_engine] if preferred_engine else self.ENGINES
         for eng in engines_to_try:
             if eng is None:
                 continue
@@ -70,6 +84,7 @@ class GameOCR:
     def _init_openvino_python(self):
         from openvino_inference import PaddleOCREngine
         self.engine = PaddleOCREngine(device=self.device)
+        logger.info(f"OpenVINO OCR 设备: {self.device}")
 
     def _init_openvino_cpp(self):
         if not os.path.isfile(_CPP_OCR_EXE):

@@ -71,9 +71,17 @@ class GameDetector:
         self.sdk_available = False
         try:
             if self.sdk.check_server():
-                self.sdk.init_all(self.instance_id)
+                # 尝试初始化,如果全部失败(instance 冲突)则换新 ID 重试
+                ok_count = self.sdk.init_all(self.instance_id)
+                if ok_count == 0:
+                    # 所有服务都初始化失败,可能是 instance 冲突,换新 ID
+                    import time as _t
+                    new_id = f"{SDK_CONFIG['instance_id']}_{int(_t.time()) % 100000}"
+                    logger.info(f"SDK instance 全部冲突,切换到新 instance_id: {new_id}")
+                    self.instance_id = new_id
+                    ok_count = self.sdk.init_all(self.instance_id)
                 self.sdk_available = True
-                logger.info(f"SDK已连接并初始化, instance_id={self.instance_id}")
+                logger.info(f"SDK已连接并初始化, instance_id={self.instance_id}, 成功服务数={ok_count}")
             else:
                 logger.warning("SDK服务不可用，使用本地模式")
         except Exception as e:
