@@ -43,20 +43,39 @@
 - 支持爬取：装备列表、技能详情、构筑推荐、攻略详情
 - 本地JSON缓存，离线可用
 
-### 🖥️ GUI界面
-- 暗色主题，可拖拽、置顶、半透明
-- SDK连接状态实时指示
-- 实时显示OCR状态和识别文字
-- 语音助手状态面板
-- 搜索框 + 语音控制按钮
+### 🔮 d2core 构筑自动加载（核心特性）
+- **嵌入式网页展示**：在主窗口内嵌 QWebEngineView，直接加载 [d2core.com](https://www.d2core.com) 的在线构筑页面，无需切换浏览器
+- **自动职业识别**：综合三种策略自动识别当前角色职业
+  - 职业图标模板匹配（多区域裁剪 + ORB 特征匹配）
+  - OCR 关键词识别（中英文职业名 + 角色名映射）
+  - 主属性识别（力量/智力/敏捷/意志 数值最大者）
+- **自动加载构筑**：识别到职业后自动加载 d2core 上对应的 S13 季节构筑
+- **场景驱动网页内 Tab 切换**：5 秒一次 Vision 场景识别，自动驱动网页内部 tab 跟随游戏画面
+  - 游戏在装备界面 → 网页切到「总览」
+  - 游戏在技能树界面 → 网页切到「技能」
+  - 游戏在巅峰界面 → 网页切到「巅峰」
+- **JS 注入切换**：通过注入 JS 点击 `.planner-module-tab` 实现网页内部 tab 无刷新切换
+
+### 🖥️ GUI界面（无边框置顶窗口）
+- **无边框置顶**：`FramelessWindowHint | WindowStaysOnTopHint`，半透明暗色主题
+- **header 拖动手柄**：点击窗口顶部 header 任意位置即可拖动窗口（QLabel 对鼠标事件透明，关闭按钮仍可点击）
+- **菜单栏集成**：所有功能按钮隐藏到顶部菜单栏（场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索），最大化网页展示区域
+- **隐藏 Tab 栏**：界面不再显示战斗/装备/技能/巅峰/地图 tab，由场景识别自动切换
+- SDK连接状态、OCR 引擎、语音引擎、场景信息实时显示在 header
+- 搜索通过菜单触发弹窗输入
 
 ## 📁 项目结构
 
 ```
-├── main.py                 # 主入口文件
+├── main.py                 # 主入口文件（含 WebEngine 数据目录沙箱重定向）
 ├── config.py               # 配置文件（含SDK配置）
 ├── sdk_client.py           # Intel Gaming Assistant SDK客户端
-├── gui.py                  # GUI界面（PyQt5）
+├── gui.py                  # GUI界面（无边框置顶窗口 + 菜单栏 + 嵌入式网页）
+├── web_overlay.py          # 嵌入式 QWebEngineView（加载 d2core 构筑网页 + JS 注入切换 tab）
+├── scene_classifier.py     # 场景分类器（SceneCategory: 战斗/装备/技能/巅峰/地图）
+├── class_icon_detector.py  # 职业图标检测（多区域裁剪 + ORB 模板匹配）
+├── class_recommender.py    # 职业推荐器（OCR关键词 + 角色名 + 主属性识别）
+├── builds_config.py        # d2core S13 季节构筑截图配置
 ├── graphical_overlay.py    # 图形化游戏叠加层
 ├── overlay.py              # 文本叠加层（降级备选）
 ├── realtime_assistant.py   # 实时助手核心
@@ -271,12 +290,13 @@ SDK_CONFIG = {
 python main.py
 ```
 
-启动后会在屏幕右侧出现一个半透明的暗色面板，包含：
-- 搜索框：手动输入关键词搜索
-- OCR/SDK状态：实时显示识别引擎状态
-- 语音助手：语音输入/播报控制
-- 任务/BOSS/推荐：自动识别游戏状态并显示攻略
-- 叠加层控制：切换装备/技能/巅峰面板
+启动后会在屏幕上出现一个半透明、无边框、置顶的暗色面板，包含：
+- **顶部 header**：标题、OCR 引擎、语音引擎、SDK 状态、当前场景信息、关闭按钮（**点击 header 任意位置可拖动窗口**）
+- **菜单栏**：场景 / 控制 / 语音 / 叠加层 / 伤害 / 搜索（所有功能按钮隐藏在此）
+- **主区域**：嵌入式 QWebEngineView 加载 d2core 构筑网页，根据场景识别自动切换网页内部 tab
+- **自动流程**：识别到职业后自动加载对应构筑 → 5 秒一次场景识别 → 自动切换网页 tab（装备→总览 / 技能树→技能 / 巅峰→巅峰）
+
+> **提示**：若启动后窗口无法拖动，请尝试点击窗口顶部 header 区域（标题文字、引擎状态等标签处均可）。
 
 ### 模式二：CLI命令行模式
 
@@ -372,6 +392,21 @@ A:
 1. 启用SDK Vision服务可获得更精准的场景识别
 2. 尝试切换OCR引擎：`--ocr=paddleocr`
 3. 调整 `config.py` 中的 `SCREEN_REGION` 匹配你的分辨率
+
+## 🙏 致谢与参考
+
+本项目基于以下优秀的开源项目与技术构建：
+
+- **Intel AI Gaming Assistant Library** — 本项目核心依赖的 Intel Gaming Assistant SDK（Vision 场景识别 / Knowledge RAG 问答 / ASR 语音识别 / BAR Boss 动作识别）即来自此开源项目。
+  - 仓库地址：https://github.com/GameTechDev/IntelAIGamingAssistantLibrary
+- [d2core.com](https://www.d2core.com) — 暗黑破坏神 IV 构筑（Build）数据来源
+- [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) — GUI 框架与 QtWebEngine
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) / [OpenVINO](https://github.com/openvinotoolkit/openvino) — OCR 文字识别
+- [Edge-TTS](https://github.com/rany2/edge-tts) — 语音播报
+
+> 如果 Intel Gaming Assistant SDK 帮助到了你，欢迎前往 [IntelAIGamingAssistantLibrary](https://github.com/GameTechDev/IntelAIGamingAssistantLibrary) 给项目点个 ⭐。
+
+---
 
 ## 📄 License
 

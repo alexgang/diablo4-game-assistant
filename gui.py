@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QFrame, QScrollArea, QLineEdit,
     QTabWidget, QCheckBox, QComboBox, QGridLayout, QMessageBox,
+    QAction, QInputDialog,
 )
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
@@ -605,6 +606,17 @@ class MainWindow(QMainWindow):
         self.close_btn.clicked.connect(self.close)
         header_layout.addWidget(self.close_btn)
 
+        # 让 header 上的所有 QLabel 对鼠标事件透明(包括后面 insertWidget 加进来的 scene_info_label)
+        # 这样点击 header 空白区域 / 标签文字时,事件能传到 header 控件本身,
+        # 由事件过滤器接管实现窗口拖动(close_btn 仍能正常点击)
+        for child in header.findChildren(QLabel):
+            child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        # header 作为窗口拖动手柄
+        self._drag_handle = header
+        header.installEventFilter(self)
+        header.setMouseTracking(True)
+
         layout.addWidget(header)
 
         line = QFrame()
@@ -612,6 +624,8 @@ class MainWindow(QMainWindow):
         line.setStyleSheet("background-color: rgba(139,0,0,0.5);")
         layout.addWidget(line)
 
+        # === 保留创建但不加入布局的控件（其他方法仍会引用这些对象）===
+        # 搜索控件（通过菜单触发搜索）
         search_widget = QWidget()
         search_widget.setStyleSheet("background-color: transparent;")
         search_layout = QHBoxLayout(search_widget)
@@ -632,8 +646,209 @@ class MainWindow(QMainWindow):
         )
         self.search_btn.clicked.connect(self.manual_search)
         search_layout.addWidget(self.search_btn)
-        layout.addWidget(search_widget)
+        # search_widget 不加入布局，搜索通过菜单触发
 
+        # 场景信息标签放到 header 右侧（替代原来单独的 scene_status_widget 行）
+        self.scene_info_label = QLabel("当前场景: -- (识别中...)")
+        self.scene_info_label.setFont(_ff('Microsoft YaHei', 10))
+        self.scene_info_label.setStyleSheet("color: #9b59b6; background-color: transparent;")
+        # 同样对鼠标事件透明,避免拦截 header 拖动
+        self.scene_info_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        header_layout.insertWidget(header_layout.indexOf(self.close_btn), self.scene_info_label)
+
+        # 自动切Tab复选框（保留为 QCheckBox，其他代码用 isChecked()；通过菜单 action 同步状态）
+        self.auto_switch_check = QCheckBox("自动切Tab")
+        self.auto_switch_check.setChecked(True)
+        self.auto_switch_check.setFont(_ff('Microsoft YaHei', 9))
+        self.auto_switch_check.setStyleSheet("color: #ccc; background-color: transparent;")
+
+        # 场景识别按钮（保留创建，不加入布局）
+        self.scene_refresh_btn = QPushButton("识别")
+        self.scene_refresh_btn.setStyleSheet(
+            "background-color: #0066cc; color: white; border: none; "
+            f"border-radius: 3px; padding: 3px 8px; font-size: {_fs(10)}px;"
+        )
+        self.scene_refresh_btn.clicked.connect(self._manual_scene_detect)
+
+        # 控制按钮（保留创建，不加入布局）
+        self.pause_btn = QPushButton("暂停")
+        self.pause_btn.setStyleSheet(
+            "background-color: #8b0000; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.pause_btn.clicked.connect(self.toggle_pause)
+
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setStyleSheet(
+            "background-color: #0066cc; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.refresh_btn.clicked.connect(self.manual_refresh)
+
+        self.ocr_toggle_btn = QPushButton("OCR: 开")
+        self.ocr_toggle_btn.setStyleSheet(
+            "background-color: #2d5a27; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.ocr_toggle_btn.clicked.connect(self.toggle_ocr)
+
+        # 语音按钮（保留创建，不加入布局）
+        self.voice_listen_btn = QPushButton("🎤 语音输入")
+        self.voice_listen_btn.setStyleSheet(
+            "background-color: #9b59b6; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.voice_listen_btn.clicked.connect(self.toggle_voice_listening)
+
+        self.voice_speak_btn = QPushButton("🔊 朗读结果")
+        self.voice_speak_btn.setStyleSheet(
+            "background-color: #2d5a27; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.voice_speak_btn.clicked.connect(self.speak_current_result)
+
+        self.voice_stop_btn = QPushButton("⏹ 停止朗读")
+        self.voice_stop_btn.setStyleSheet(
+            "background-color: #666; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.voice_stop_btn.clicked.connect(self.stop_speaking)
+
+        # 叠加层按钮（保留创建，不加入布局）
+        self.overlay_toggle_btn = QPushButton("📋 叠加层")
+        self.overlay_toggle_btn.setStyleSheet(
+            "background-color: #e67e22; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.overlay_toggle_btn.clicked.connect(self.toggle_overlay)
+
+        self.overlay_equip_btn = QPushButton("⚔️ 装备")
+        self.overlay_equip_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #bf642f; border: 1px solid #bf642f; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.overlay_equip_btn.clicked.connect(lambda: self._show_overlay_tab(0))
+
+        self.overlay_skill_btn = QPushButton("🔮 技能")
+        self.overlay_skill_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #4ade80; border: 1px solid #4ade80; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.overlay_skill_btn.clicked.connect(lambda: self._show_overlay_tab(1))
+
+        self.overlay_paragon_btn = QPushButton("🌟 巅峰")
+        self.overlay_paragon_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #f1c40f; border: 1px solid #f1c40f; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.overlay_paragon_btn.clicked.connect(lambda: self._show_overlay_tab(2))
+
+        self.overlay_merc_btn = QPushButton("🗡️ 雇佣")
+        self.overlay_merc_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #9b59b6; border: 1px solid #9b59b6; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.overlay_merc_btn.clicked.connect(lambda: self._show_overlay_tab(3))
+
+        # 伤害监控按钮（保留创建，不加入布局）
+        self.damage_monitor_btn = QPushButton("⚔️ 伤害监控")
+        self.damage_monitor_btn.setStyleSheet(
+            "background-color: #c0392b; color: white; border: none; "
+            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
+        )
+        self.damage_monitor_btn.clicked.connect(self.toggle_damage_monitor)
+
+        self.damage_reset_btn = QPushButton("🔄 重置")
+        self.damage_reset_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #e74c3c; border: 1px solid #e74c3c; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.damage_reset_btn.clicked.connect(self.reset_damage_stats)
+
+        self.damage_feed_btn = QPushButton("📝 输入日志")
+        self.damage_feed_btn.setStyleSheet(
+            "background-color: #2c3e50; color: #f39c12; border: 1px solid #f39c12; "
+            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
+        )
+        self.damage_feed_btn.clicked.connect(self._feed_damage_log)
+
+        # guide_widget 保留创建（其他代码可能引用），不加入布局
+        self.guide_widget = GuideWidget()
+
+        # === 菜单栏（替代底部所有按钮行）===
+        menubar = self.menuBar()
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background-color: rgba(20, 20, 40, 200);
+                color: #ccc;
+                border-bottom: 1px solid rgba(139, 0, 0, 0.4);
+            }
+            QMenuBar::item {
+                background-color: transparent;
+                padding: 4px 12px;
+            }
+            QMenuBar::item:selected {
+                background-color: rgba(139, 0, 0, 0.6);
+                color: #fff;
+            }
+            QMenu {
+                background-color: rgba(30, 30, 50, 240);
+                color: #ccc;
+                border: 1px solid rgba(139, 0, 0, 0.4);
+            }
+            QMenu::item:selected {
+                background-color: rgba(139, 0, 0, 0.6);
+                color: #fff;
+            }
+        """)
+
+        # 场景菜单
+        menu_scene = menubar.addMenu("场景")
+        self._auto_switch_action = QAction("自动切Tab", self)
+        self._auto_switch_action.setCheckable(True)
+        self._auto_switch_action.setChecked(self.auto_switch_check.isChecked())
+        self._auto_switch_action.triggered.connect(
+            lambda: self.auto_switch_check.setChecked(self._auto_switch_action.isChecked())
+        )
+        menu_scene.addAction(self._auto_switch_action)
+        menu_scene.addAction("手动识别", self._manual_scene_detect)
+
+        # 控制菜单
+        menu_control = menubar.addMenu("控制")
+        self._pause_action = QAction("暂停/继续", self)
+        self._pause_action.triggered.connect(self.toggle_pause)
+        menu_control.addAction(self._pause_action)
+        menu_control.addAction("刷新", self.manual_refresh)
+        self._ocr_action = QAction("OCR: 开", self)
+        self._ocr_action.triggered.connect(self.toggle_ocr)
+        menu_control.addAction(self._ocr_action)
+
+        # 语音菜单
+        menu_voice = menubar.addMenu("语音")
+        menu_voice.addAction("语音输入", self.toggle_voice_listening)
+        menu_voice.addAction("朗读结果", self.speak_current_result)
+        menu_voice.addAction("停止朗读", self.stop_speaking)
+
+        # 叠加层菜单
+        menu_overlay = menubar.addMenu("叠加层")
+        menu_overlay.addAction("叠加层开关", self.toggle_overlay)
+        menu_overlay.addAction("装备", lambda: self._show_overlay_tab(0))
+        menu_overlay.addAction("技能", lambda: self._show_overlay_tab(1))
+        menu_overlay.addAction("巅峰", lambda: self._show_overlay_tab(2))
+        menu_overlay.addAction("雇佣", lambda: self._show_overlay_tab(3))
+
+        # 伤害菜单
+        menu_damage = menubar.addMenu("伤害")
+        menu_damage.addAction("伤害监控", self.toggle_damage_monitor)
+        menu_damage.addAction("重置", self.reset_damage_stats)
+        menu_damage.addAction("输入日志", self._feed_damage_log)
+
+        # 搜索菜单
+        menu_search = menubar.addMenu("搜索")
+        search_action = menu_search.addAction("🔍 搜索游戏内容")
+        search_action.triggered.connect(self._menu_search)
+
+        # === Tabs（保留创建所有 tab 内容，隐藏 Tab 栏，最大化展示区域）===
         self.tabs = QTabWidget()
         self.tabs.setFont(_ff('Microsoft YaHei', 10, QFont.Bold))
         self.tabs.setStyleSheet("""
@@ -659,181 +874,18 @@ class MainWindow(QMainWindow):
             }
         """)
         self._create_scene_tabs()
-        layout.addWidget(self.tabs)
-
-        scene_status_widget = QWidget()
-        scene_status_widget.setStyleSheet("background-color: transparent;")
-        scene_status_layout = QHBoxLayout(scene_status_widget)
-        scene_status_layout.setContentsMargins(4, 0, 4, 0)
-        scene_status_layout.setSpacing(6)
-
-        self.scene_info_label = QLabel("当前场景: -- (识别中...)")
-        self.scene_info_label.setFont(_ff('Microsoft YaHei', 10))
-        self.scene_info_label.setStyleSheet("color: #9b59b6; background-color: transparent;")
-        scene_status_layout.addWidget(self.scene_info_label, 1)
-
-        self.auto_switch_check = QCheckBox("自动切Tab")
-        self.auto_switch_check.setChecked(True)
-        self.auto_switch_check.setFont(_ff('Microsoft YaHei', 9))
-        self.auto_switch_check.setStyleSheet("color: #ccc; background-color: transparent;")
-        scene_status_layout.addWidget(self.auto_switch_check)
-
-        self.scene_refresh_btn = QPushButton("识别")
-        self.scene_refresh_btn.setStyleSheet(
-            "background-color: #0066cc; color: white; border: none; "
-            f"border-radius: 3px; padding: 3px 8px; font-size: {_fs(10)}px;"
-        )
-        self.scene_refresh_btn.clicked.connect(self._manual_scene_detect)
-        scene_status_layout.addWidget(self.scene_refresh_btn)
-
-        layout.addWidget(scene_status_widget)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("background-color: transparent; border: none;")
-        scroll_area.viewport().setStyleSheet("background-color: transparent;")
-        self.guide_widget = GuideWidget()
-        scroll_area.setWidget(self.guide_widget)
-        layout.addWidget(scroll_area, 0)
-
-        control_widget = QWidget()
-        control_layout = QHBoxLayout(control_widget)
-        control_layout.setSpacing(4)
-
-        self.pause_btn = QPushButton("暂停")
-        self.pause_btn.setStyleSheet(
-            "background-color: #8b0000; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.pause_btn.clicked.connect(self.toggle_pause)
-        control_layout.addWidget(self.pause_btn)
-
-        self.refresh_btn = QPushButton("刷新")
-        self.refresh_btn.setStyleSheet(
-            "background-color: #0066cc; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.refresh_btn.clicked.connect(self.manual_refresh)
-        control_layout.addWidget(self.refresh_btn)
-
-        self.ocr_toggle_btn = QPushButton("OCR: 开")
-        self.ocr_toggle_btn.setStyleSheet(
-            "background-color: #2d5a27; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.ocr_toggle_btn.clicked.connect(self.toggle_ocr)
-        control_layout.addWidget(self.ocr_toggle_btn)
-
-        layout.addWidget(control_widget)
-
-        voice_control_widget = QWidget()
-        voice_control_layout = QHBoxLayout(voice_control_widget)
-        voice_control_layout.setSpacing(4)
-
-        self.voice_listen_btn = QPushButton("🎤 语音输入")
-        self.voice_listen_btn.setStyleSheet(
-            "background-color: #9b59b6; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.voice_listen_btn.clicked.connect(self.toggle_voice_listening)
-        voice_control_layout.addWidget(self.voice_listen_btn)
-
-        self.voice_speak_btn = QPushButton("🔊 朗读结果")
-        self.voice_speak_btn.setStyleSheet(
-            "background-color: #2d5a27; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.voice_speak_btn.clicked.connect(self.speak_current_result)
-        voice_control_layout.addWidget(self.voice_speak_btn)
-
-        self.voice_stop_btn = QPushButton("⏹ 停止朗读")
-        self.voice_stop_btn.setStyleSheet(
-            "background-color: #666; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.voice_stop_btn.clicked.connect(self.stop_speaking)
-        voice_control_layout.addWidget(self.voice_stop_btn)
-
-        layout.addWidget(voice_control_widget)
-
-        overlay_control_widget = QWidget()
-        overlay_control_layout = QHBoxLayout(overlay_control_widget)
-        overlay_control_layout.setSpacing(4)
-
-        self.overlay_toggle_btn = QPushButton("📋 叠加层")
-        self.overlay_toggle_btn.setStyleSheet(
-            "background-color: #e67e22; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.overlay_toggle_btn.clicked.connect(self.toggle_overlay)
-        overlay_control_layout.addWidget(self.overlay_toggle_btn)
-
-        self.overlay_equip_btn = QPushButton("⚔️ 装备")
-        self.overlay_equip_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #bf642f; border: 1px solid #bf642f; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.overlay_equip_btn.clicked.connect(lambda: self._show_overlay_tab(0))
-        overlay_control_layout.addWidget(self.overlay_equip_btn)
-
-        self.overlay_skill_btn = QPushButton("🔮 技能")
-        self.overlay_skill_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #4ade80; border: 1px solid #4ade80; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.overlay_skill_btn.clicked.connect(lambda: self._show_overlay_tab(1))
-        overlay_control_layout.addWidget(self.overlay_skill_btn)
-
-        self.overlay_paragon_btn = QPushButton("🌟 巅峰")
-        self.overlay_paragon_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #f1c40f; border: 1px solid #f1c40f; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.overlay_paragon_btn.clicked.connect(lambda: self._show_overlay_tab(2))
-        overlay_control_layout.addWidget(self.overlay_paragon_btn)
-
-        self.overlay_merc_btn = QPushButton("🗡️ 雇佣")
-        self.overlay_merc_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #9b59b6; border: 1px solid #9b59b6; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.overlay_merc_btn.clicked.connect(lambda: self._show_overlay_tab(3))
-        overlay_control_layout.addWidget(self.overlay_merc_btn)
-
-        layout.addWidget(overlay_control_widget)
-
-        damage_control_widget = QWidget()
-        damage_control_layout = QHBoxLayout(damage_control_widget)
-        damage_control_layout.setSpacing(4)
-
-        self.damage_monitor_btn = QPushButton("⚔️ 伤害监控")
-        self.damage_monitor_btn.setStyleSheet(
-            "background-color: #c0392b; color: white; border: none; "
-            "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
-        )
-        self.damage_monitor_btn.clicked.connect(self.toggle_damage_monitor)
-        damage_control_layout.addWidget(self.damage_monitor_btn)
-
-        self.damage_reset_btn = QPushButton("🔄 重置")
-        self.damage_reset_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #e74c3c; border: 1px solid #e74c3c; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.damage_reset_btn.clicked.connect(self.reset_damage_stats)
-        damage_control_layout.addWidget(self.damage_reset_btn)
-
-        self.damage_feed_btn = QPushButton("📝 输入日志")
-        self.damage_feed_btn.setStyleSheet(
-            "background-color: #2c3e50; color: #f39c12; border: 1px solid #f39c12; "
-            "border-radius: 3px; padding: 4px 8px; font-size: {_fs(13)}px;"
-        )
-        self.damage_feed_btn.clicked.connect(self._feed_damage_log)
-        damage_control_layout.addWidget(self.damage_feed_btn)
-
-        layout.addWidget(damage_control_widget)
+        self.tabs.tabBar().hide()
+        layout.addWidget(self.tabs, 1)
 
         self.dragging = False
         self.drag_position = None
+
+    def _menu_search(self):
+        """通过菜单触发搜索弹窗"""
+        text, ok = QInputDialog.getText(self, "搜索", "输入搜索内容:")
+        if ok and text:
+            self.search_input.setText(text)
+            self.manual_search()
 
     def _create_scene_tabs(self):
         """创建场景 Tab：战斗 / 装备 / 技能 / 地图"""
@@ -1284,13 +1336,14 @@ class MainWindow(QMainWindow):
             self._trigger_class_ocr()
 
     def _switch_to_category(self, category):
-        """切换到指定类别 Tab。SKILL/PEAK 都映射到技能Tab(内嵌构筑网页),
-        并驱动网页内部 tab 跟随游戏画面(技能树->技能, 巅峰->巅峰)。"""
+        """切换到指定类别 Tab。装备/技能/巅峰 都映射到技能Tab(内嵌构筑网页),
+        并驱动网页内部 tab 跟随游戏画面:
+          装备->总览, 技能树->技能, 巅峰->巅峰"""
         tab_index_map = {
             SceneCategory.COMBAT: 0,
-            SceneCategory.EQUIPMENT: 1,
+            SceneCategory.EQUIPMENT: 2,
             SceneCategory.SKILL: 2,
-            SceneCategory.PEAK: 2,      # 巅峰也用技能Tab的内嵌网页,靠内部tab区分
+            SceneCategory.PEAK: 2,
             SceneCategory.MAP: 4,
             SceneCategory.UNKNOWN: 0,
         }
@@ -1298,11 +1351,16 @@ class MainWindow(QMainWindow):
         logger.info(f"🔄 Tab 切换: {self.current_scene_category.value} -> {category.value} (index={index})")
         self.tabs.setCurrentIndex(index)
 
-        # 游戏画面在技能树/巅峰界面 -> 网页内部自动切到对应tab
-        if category in (SceneCategory.SKILL, SceneCategory.PEAK):
+        # 游戏画面在装备/技能树/巅峰界面 -> 网页内部自动切到对应tab
+        inner_tab_map = {
+            SceneCategory.EQUIPMENT: 'overview',
+            SceneCategory.SKILL: 'skill',
+            SceneCategory.PEAK: 'peak',
+        }
+        if category in inner_tab_map:
             wv = self._ensure_skill_webview()
             if wv is not None:
-                wv.switch_inner_tab('skill' if category == SceneCategory.SKILL else 'peak')
+                wv.switch_inner_tab(inner_tab_map[category])
 
         color = get_category_color(category)
         self.tabs.tabBar().setStyleSheet(
@@ -1842,6 +1900,34 @@ class MainWindow(QMainWindow):
                 f"已抓取 {len(builds)} 个BD的图片！\n请从下拉框选择具体BD查看。"
             )
 
+    def eventFilter(self, obj, event):
+        """让 header 区域成为窗口拖动手柄。
+
+        UI 重构后窗口被 QTabWidget + WebEngine 占满,主窗口的 mousePressEvent
+        永远不会被触发。改为在 header 上安装事件过滤器,header 上的 QLabel
+        都设置了 WA_TransparentForMouseEvents,所以点击 header 任意位置都能
+        拖动整个窗口(close_btn 是 QPushButton,仍能正常响应点击)。
+        """
+        if obj is getattr(self, '_drag_handle', None):
+            etype = event.type()
+            if etype == event.MouseButtonPress:
+                if event.button() == Qt.LeftButton:
+                    self.dragging = True
+                    self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+                    event.accept()
+                    return True
+            elif etype == event.MouseMove:
+                if self.dragging:
+                    self.move(event.globalPos() - self.drag_position)
+                    event.accept()
+                    return True
+            elif etype == event.MouseButtonRelease:
+                if event.button() == Qt.LeftButton:
+                    self.dragging = False
+                    event.accept()
+                    return True
+        return super().eventFilter(obj, event)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.dragging = True
@@ -1868,9 +1954,13 @@ class MainWindow(QMainWindow):
         self.is_paused = not self.is_paused
         if self.is_paused:
             self.pause_btn.setText("继续")
+            if hasattr(self, "_pause_action"):
+                self._pause_action.setText("▶ 继续")
             self.worker.stop()
         else:
             self.pause_btn.setText("暂停")
+            if hasattr(self, "_pause_action"):
+                self._pause_action.setText("⏸ 暂停/继续")
             self.worker = AnalysisWorker(self.detector)
             self.worker.result_ready.connect(self.update_guide)
             self.worker.start()
@@ -1892,12 +1982,16 @@ class MainWindow(QMainWindow):
                 "background-color: #2d5a27; color: white; border: none; "
                 "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
             )
+            if hasattr(self, "_ocr_action"):
+                self._ocr_action.setText("OCR: 开")
         else:
             self.ocr_toggle_btn.setText("OCR: 关")
             self.ocr_toggle_btn.setStyleSheet(
                 "background-color: #666; color: white; border: none; "
                 "border-radius: 3px; padding: 5px 10px; font-size: {_fs(16)}px;"
             )
+            if hasattr(self, "_ocr_action"):
+                self._ocr_action.setText("OCR: 关")
 
     def toggle_voice_listening(self):
         """切换语音监听"""
