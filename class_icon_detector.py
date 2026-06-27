@@ -43,6 +43,18 @@ CLASS_FROM_SCENE_ID = {
     f"{ICON_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
 }
 
+# ============== 技能栏在 Vision 索引中的 scene_id ==============
+# 技能栏在所有游戏界面都可见(战斗/城镇/地图等),比右上角图标更通用
+SKILL_BAR_SCENE_PREFIX = "skill_bar_"
+CLASS_FROM_SKILL_BAR_SCENE_ID = {
+    f"{SKILL_BAR_SCENE_PREFIX}barbarian": D4Class.BARBARIAN,
+    f"{SKILL_BAR_SCENE_PREFIX}rogue": D4Class.ROGUE,
+    f"{SKILL_BAR_SCENE_PREFIX}sorcerer": D4Class.SORCERER,
+    f"{SKILL_BAR_SCENE_PREFIX}druid": D4Class.DRUID,
+    f"{SKILL_BAR_SCENE_PREFIX}necromancer": D4Class.NECROMANCER,
+    f"{SKILL_BAR_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
+}
+
 
 # ============== 主属性 → 职业映射（用于 OCR 辅助识别） ==============
 # D4 只有 4 种核心属性：力量/敏捷/智力/意志。
@@ -136,6 +148,37 @@ def crop_right_panel(frame: np.ndarray, ratio: float = 0.5) -> Optional[np.ndarr
     return panel if panel.size > 0 else None
 
 
+def crop_skill_bar(frame: np.ndarray) -> Optional[np.ndarray]:
+    """
+    裁剪游戏最下方的技能栏区域
+
+    D4 技能栏在所有游戏界面都可见(战斗/城镇/地图等),
+    包含当前职业的 6 个技能图标 + 左侧血瓶/怒气/等 + 右侧Buff栏。
+    不同职业的技能图标完全不同,是识别职业的可靠依据。
+
+    相对坐标(2560x1600 实测校准):
+    - 横向: 30% ~ 70% (技能图标主体区域,避开两侧血瓶/Buff)
+    - 纵向: 85% ~ 97% (画面最底部技能栏)
+
+    Args:
+        frame: BGR 全屏截图
+
+    Returns:
+        技能栏截图,或 None
+    """
+    if frame is None or frame.size == 0:
+        return None
+    h, w = frame.shape[:2]
+    x_min = int(w * 0.30)
+    x_max = int(w * 0.70)
+    y_min = int(h * 0.85)
+    y_max = int(h * 0.97)
+    if x_max <= x_min or y_max <= y_min:
+        return None
+    bar = frame[y_min:y_max, x_min:x_max]
+    return bar if bar.size > 0 else None
+
+
 def detect_class_from_attributes(text: str) -> Optional[D4Class]:
     """
     从右侧面板 OCR 文本中识别主属性，反推职业
@@ -206,6 +249,8 @@ class ClassIconDetector:
             'class_icon_templates',
         )
         os.makedirs(self.templates_dir, exist_ok=True)
+        # 记录最近一次识别的来源('icon'/'skill_bar'/None),供调用方判断
+        self.last_detect_source = None
 
     def detect_via_vision(self, icon: np.ndarray, threshold: float = 0.5) -> Optional[D4Class]:
         """
@@ -320,6 +365,9 @@ class ClassIconDetector:
         Returns:
             D4Class 或 None
         """
+        # 重置来源标记,供调用方判断识别来源(icon/skill_bar)
+        self.last_detect_source = None
+
         # 多个可能的图标位置（D4 不同界面下职业图标位置不同）
         crop_funcs = [
             ('top_right', crop_class_icon_region),     # 装备/巅峰界面：右上角
@@ -335,14 +383,23 @@ class ClassIconDetector:
             # 方案1：SDK Vision
             cls = self.detect_via_vision(icon)
             if cls:
+                self.last_detect_source = 'icon'
                 logger.info(f"在 {region_name} 区域识别到职业: {cls.value}")
                 return cls
             # 方案2：本地模板匹配
             cls = self.detect_via_template(icon)
             if cls:
+                self.last_detect_source = 'icon'
                 logger.info(f"在 {region_name} 区域（模板）识别到职业: {cls.value}")
                 return cls
             logger.info(f"  {region_name}: 未匹配")
+
+        # 策略1.5: 技能栏图标识别（所有界面都可见,战斗界面也能用）
+        cls = self.detect_via_skill_bar(frame)
+        if cls:
+            self.last_detect_source = 'skill_bar'
+            logger.info(f"技能栏识别到职业: {cls.value}")
+            return cls
 
         logger.info("所有区域都未能识别职业")
         return None
@@ -364,6 +421,165 @@ class ClassIconDetector:
         path = os.path.join(self.templates_dir, f'{class_type.value}.png')
         cv2.imwrite(path, icon)
         logger.info(f"已保存职业图标模板: {class_type.value} → {path}")
+        return path
+
+    # ============== 技能栏识别（策略1.5） ==============
+
+    def detect_via_skill_bar_vision(self, skill_bar: np.ndarray, threshold: float = 0.5) -> Optional[D4Class]:
+        """
+        通过 SDK Vision 查询技能栏区域
+
+        技能栏在所有游戏界面都可见,比右上角图标更通用。
+        需要预先把各职业技能栏截图加入 Vision 索引(scene_id = skill_bar_<职业>)。
+
+        Args:
+            skill_bar: 技能栏截图 BGR
+            threshold: 匹配得分阈值
+
+        Returns:
+            D4Class 或 None
+        """
+        if self.sdk is None or skill_bar is None or skill_bar.size == 0:
+            return None
+
+        tmp_path = os.path.join(self.templates_dir, '_query_skill_bar.png')
+        cv2.imwrite(tmp_path, skill_bar)
+
+        try:
+            results = self.sdk.vision_query(
+                self.instance_id, tmp_path, topk=3, mode='basic'
+            )
+            if not results:
+                results = self.sdk.vision_query(
+                    self.instance_id, tmp_path, topk=3, mode='accurate'
+                )
+            if not results:
+                return None
+
+            for r in results:
+                scene_id = r.get('scene_id', '')
+                score = r.get('score', 0)
+                if score < threshold:
+                    continue
+                cls = CLASS_FROM_SKILL_BAR_SCENE_ID.get(scene_id)
+                if cls:
+                    logger.info(
+                        f"Vision 技能栏识别: {scene_id} "
+                        f"({score*100:.0f}%) → {cls.value}"
+                    )
+                    return cls
+        except Exception as e:
+            logger.debug(f"Vision 技能栏查询失败: {e}")
+        return None
+
+    def detect_via_skill_bar_template(self, skill_bar: np.ndarray, threshold: float = 0.6) -> Optional[D4Class]:
+        """
+        通过本地模板匹配识别技能栏（不依赖 SDK 服务）
+
+        模板文件命名: skill_bar_<职业>.png (由 save_skill_bar_template 自动采集)
+        使用 cv2.matchTemplate (TM_CCOEFF_NORMED) 进行归一化相关系数匹配。
+
+        Args:
+            skill_bar: 待识别的技能栏截图
+            threshold: 匹配阈值(0~1,越高越严格)
+
+        Returns:
+            D4Class 或 None
+        """
+        if skill_bar is None or skill_bar.size == 0:
+            return None
+
+        best_class = None
+        best_score = -1.0
+        for class_name, cls in [
+            ('barbarian', D4Class.BARBARIAN),
+            ('rogue', D4Class.ROGUE),
+            ('sorcerer', D4Class.SORCERER),
+            ('druid', D4Class.DRUID),
+            ('necromancer', D4Class.NECROMANCER),
+            ('spiritborn', D4Class.SPIRITBORN),
+        ]:
+            tpl_path = os.path.join(self.templates_dir, f'skill_bar_{class_name}.png')
+            if not os.path.exists(tpl_path):
+                continue
+            tpl = cv2.imread(tpl_path)
+            if tpl is None or tpl.size == 0:
+                continue
+            try:
+                # 调整模板与目标为相同尺寸(适配不同分辨率)
+                tpl_resized = cv2.resize(tpl, (skill_bar.shape[1], skill_bar.shape[0]))
+                result = cv2.matchTemplate(skill_bar, tpl_resized, cv2.TM_CCOEFF_NORMED)
+                score = float(result.max())
+                logger.debug(f"技能栏模板 {class_name}: score={score:.3f}")
+                if score > best_score:
+                    best_score = score
+                    best_class = cls
+            except Exception as e:
+                logger.debug(f"技能栏模板匹配 {class_name} 失败: {e}")
+
+        if best_class and best_score >= threshold:
+            logger.info(
+                f"技能栏模板匹配: {best_class.value} (score={best_score:.2f})"
+            )
+            return best_class
+        if best_class:
+            logger.debug(
+                f"技能栏最佳匹配 {best_class.value} score={best_score:.2f} 未达阈值 {threshold}"
+            )
+        return None
+
+    def detect_via_skill_bar(self, frame: np.ndarray) -> Optional[D4Class]:
+        """
+        技能栏识别入口:裁剪技能栏 → Vision查询 → 本地模板匹配兜底
+
+        Args:
+            frame: BGR 全屏截图
+
+        Returns:
+            D4Class 或 None
+        """
+        skill_bar = crop_skill_bar(frame)
+        if skill_bar is None or skill_bar.size == 0:
+            logger.debug("技能栏裁剪失败")
+            return None
+
+        logger.info(f"技能栏裁剪成功 shape={skill_bar.shape}")
+
+        # 方案1: SDK Vision
+        cls = self.detect_via_skill_bar_vision(skill_bar)
+        if cls:
+            return cls
+
+        # 方案2: 本地模板匹配
+        cls = self.detect_via_skill_bar_template(skill_bar)
+        if cls:
+            return cls
+
+        logger.info("技能栏未匹配到职业")
+        return None
+
+    def save_skill_bar_template(self, frame: np.ndarray, class_type: D4Class) -> Optional[str]:
+        """
+        保存当前帧的技能栏作为模板（用于首次建立模板库）
+
+        程序自动采集:当通过其他策略(角色名/OCR/右上角图标)识别到职业时,
+        自动保存当前技能栏截图作为模板。后续即使其他策略失效,
+        技能栏模板匹配仍能工作。
+
+        Args:
+            frame: 全屏截图
+            class_type: 该截图对应的职业
+
+        Returns:
+            保存的模板路径或 None
+        """
+        skill_bar = crop_skill_bar(frame)
+        if skill_bar is None or skill_bar.size == 0:
+            logger.debug(f"保存技能栏模板失败: 裁剪为空 (class={class_type.value})")
+            return None
+        path = os.path.join(self.templates_dir, f'skill_bar_{class_type.value}.png')
+        cv2.imwrite(path, skill_bar)
+        logger.info(f"已保存技能栏模板: {class_type.value} → {path}")
         return path
 
 

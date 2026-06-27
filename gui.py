@@ -2108,7 +2108,8 @@ class MainWindow(QMainWindow):
                 )
             cls = self._class_icon_detector.detect_class(frame)
             if cls is not None:
-                self._set_class_directly(cls, source='icon')
+                source = getattr(self._class_icon_detector, 'last_detect_source', None) or 'icon'
+                self._set_class_directly(cls, source=source)
                 return
 
             # ===== 策略2: 右侧面板主属性 OCR（辅，识别力量/敏捷/智力等） =====
@@ -2239,6 +2240,39 @@ class MainWindow(QMainWindow):
                 pass
             # 同步刷新 WebOverlay（不管是否可见都加载，这样打开时立即显示对应推荐）
             self._sync_overlay_with_class(cls)
+
+            # 自动采集技能栏模板(程序自动采集策略)
+            # 当通过其他策略(角色名/OCR/右上角图标)识别到职业时,
+            # 保存当前技能栏截图作为模板,供后续技能栏识别使用
+            if source != 'skill_bar':
+                self._auto_collect_skill_bar_template(cls)
+
+    def _auto_collect_skill_bar_template(self, cls):
+        """自动采集技能栏模板(程序自动采集策略)
+
+        当通过其他策略识别到职业时,保存当前技能栏截图作为模板。
+        后续即使其他策略失效(如切换角色后角色名变化),
+        技能栏模板匹配仍能工作。
+        """
+        try:
+            if not hasattr(self, '_class_icon_detector'):
+                return
+            # 从 detector 获取当前缓存帧(避免重复截屏)
+            frame = None
+            if self.detector and hasattr(self.detector, '_cached_img'):
+                frame = self.detector._cached_img
+            if frame is None or frame.size == 0:
+                return
+            # 节流:同一职业 60 秒内只采集一次(避免频繁写文件)
+            cache_key = f'_last_skill_bar_collect_{cls.value}'
+            import time as _t
+            last = getattr(self, cache_key, 0)
+            if _t.time() - last < 60:
+                return
+            self._class_icon_detector.save_skill_bar_template(frame, cls)
+            setattr(self, cache_key, _t.time())
+        except Exception as e:
+            logger.debug(f"自动采集技能栏模板失败: {e}")
 
     def _refresh_build_images(self):
         """在线抓取最新BD攻略图片（异步）"""
