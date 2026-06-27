@@ -1473,16 +1473,34 @@ class MainWindow(QMainWindow):
             frame = None
 
             # 方式1: 使用 sc._dxcam（绑定到游戏所在显示器，修复后能截完整 3440x1440）
-            if sc._dxcam is not None:
+            # 注意: dxcam 是 native C 扩展,游戏窗口切换/最小化时 grab() 可能返回损坏帧
+            # 导致后续 cv2 操作 native 崩溃(0xC0000005)。加连续失败计数器,3次失败后
+            # 本会话禁用 dxcam,回退到 mss(纯 Python,不会 native 崩溃)。
+            dxcam_fail_count = getattr(self, '_dxcam_fail_count', 0)
+            dxcam_disabled = getattr(self, '_dxcam_disabled', False)
+            if sc._dxcam is not None and not dxcam_disabled:
                 try:
                     raw = sc._dxcam.grab()
                     if raw is None:
                         raw = sc._dxcam.get_frame()
-                    if raw is not None and raw.size > 0:
-                        frame = raw
-                        logger.info(f"[Vision] dxcam 截图: shape={frame.shape}, mean={frame.mean():.1f}")
+                    if raw is not None and raw.size > 0 and raw.ndim == 3:
+                        # 额外校验: 帧数据必须是连续的且形状合理
+                        if raw.shape[0] >= 100 and raw.shape[1] >= 100:
+                            frame = raw
+                            self._dxcam_fail_count = 0  # 重置失败计数
+                            logger.info(f"[Vision] dxcam 截图: shape={frame.shape}, mean={frame.mean():.1f}")
+                        else:
+                            logger.warning(f"[Vision] dxcam 帧形状异常: {raw.shape},跳过")
+                            self._dxcam_fail_count = dxcam_fail_count + 1
+                    else:
+                        self._dxcam_fail_count = dxcam_fail_count + 1
                 except Exception as e:
-                    logger.debug(f"dxcam 截图失败: {e}")
+                    logger.warning(f"dxcam 截图失败: {e}")
+                    self._dxcam_fail_count = dxcam_fail_count + 1
+                # 连续 3 次失败,本会话禁用 dxcam
+                if self._dxcam_fail_count >= 3:
+                    self._dxcam_disabled = True
+                    logger.warning(f"[Vision] dxcam 连续 {self._dxcam_fail_count} 次失败,本会话禁用 dxcam,回退到 mss")
 
             # 方式2: mss 截取游戏所在显示器（包含其他窗口可能遮挡的内容）
             if frame is None and mon:
