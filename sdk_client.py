@@ -406,8 +406,45 @@ class GamingAssistantSDK:
 
     # ── ASR ─────────────────────────────────────────────────────────────
 
+    def asr_is_enabled(self) -> bool:
+        """查询 ASR 服务是否已启用"""
+        try:
+            resp = self.session.get(f"{self.base_url}/asr/service/enable", timeout=5)
+            data = resp.json()
+            if data.get("code") == "ok":
+                return bool(data.get("data", {}).get("asr", False))
+            return False
+        except Exception as e:
+            logger.debug(f"查询 ASR 状态失败: {e}")
+            return False
+
+    def asr_enable(self, enable: bool = True) -> bool:
+        """启用/禁用 ASR 服务(首次使用前必须启用一次)"""
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/asr/service/enable/{'true' if enable else 'false'}",
+                timeout=30,
+            )
+            data = resp.json()
+            ok = data.get("code") == "ok"
+            logger.info(f"ASR 服务{'启用' if enable else '禁用'}: {'成功' if ok else '失败'}")
+            return ok
+        except Exception as e:
+            logger.warning(f"ASR 服务{'启用' if enable else '禁用'}失败: {e}")
+            return False
+
     def asr_transcribe(self, audio_path: str, hotwords: str = "") -> str:
-        """Transcribe an audio file; returns the transcribed text."""
+        """Transcribe an audio file; returns the transcribed text.
+
+        首次调用时如果 ASR 服务未启用,会自动启用。
+        """
+        # 首次使用时自动启用 ASR 服务
+        if not getattr(self, "_asr_enabled_checked", False):
+            if not self.asr_is_enabled():
+                logger.info("ASR 服务未启用,正在自动启用...")
+                self.asr_enable(True)
+            self._asr_enabled_checked = True
+
         mime = mimetypes.guess_type(audio_path)[0] or "application/octet-stream"
         files = [("file", (os.path.basename(audio_path), open(audio_path, "rb"), mime))]
         try:
@@ -415,7 +452,13 @@ class GamingAssistantSDK:
             resp = self._post_multipart_json("/asr/service/query/file", data, files)
             result = self._check(resp)
             if isinstance(result, dict):
-                return result.get("text", result.get("result", str(result)))
+                # 兼容多种返回格式: {'output': '...'} / {'text': '...'} / {'result': '...'}
+                return (
+                    result.get("output")
+                    or result.get("text")
+                    or result.get("result")
+                    or str(result)
+                )
             return str(result)
         finally:
             for _, f_tuple in files:
