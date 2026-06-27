@@ -52,20 +52,21 @@ def ensure_sdk_server():
     if SDK_SERVER_PATH and os.path.exists(SDK_SERVER_PATH):
         print(f"正在自动启动 SDK 服务器: {os.path.basename(SDK_SERVER_PATH)}")
         try:
-            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: 后台运行,独立进程组
+            # CREATE_NO_WINDOW: 后台运行无窗口
+            # 不重定向 stdio(重定向会导致 uvicorn lifespan 被 CancelledError 中断)
             subprocess.Popen(
                 [SDK_SERVER_PATH],
                 cwd=SDK_SERVER_WORK_DIR,
-                creationflags=0x00000008 | 0x00000200,
+                creationflags=0x08000000,
             )
         except Exception as e:
             print(f"启动 SDK 服务器失败: {e}")
     else:
         print(f"SDK服务器程序未找到: {SDK_SERVER_PATH}")
 
-    print("等待 SDK 服务器初始化...", end='', flush=True)
-    # 等待服务器就绪(最多 40 秒,模型加载需要时间)
-    for i in range(40):
+    print("等待 SDK 服务器初始化(约90秒)...", end='', flush=True)
+    # 等待服务器就绪(最多 120 秒,模型加载需要时间)
+    for i in range(120):
         time.sleep(1)
         print('.', end='', flush=True)
         if sdk.check_server():
