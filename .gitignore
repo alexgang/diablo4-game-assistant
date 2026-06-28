@@ -1,6 +1,12 @@
 # 环境变量(包含 API Key,不要提交)
 .env
 
+# BOSS 弱点数据(赛季改版时用户手动编辑,不提交;内置数据在 boss_detector.py 中作为回退)
+boss_data.json
+
+# 预生成的 BOSS 攻略音频(用 generate_boss_audio.py 重新生成,不提交)
+resources/audio/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -58,6 +64,13 @@ _list_*
 _query_*
 _rebuild_*
 _trace_*
+_analyze_*
+
+# 游戏助手服务端(体积大,不提交)
+3/
+
+# trae 比赛投稿文档(非项目代码)
+trae-contest-post.md
 
 # 测试输出文件
 test_output.wav

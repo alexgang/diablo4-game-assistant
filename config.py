@@ -25,7 +25,11 @@ CONFIDENCE_THRESHOLD = 0.8
 SCAN_INTERVAL = 2.0
 
 OCR_CONFIG = {
-    'engine': 'openvino_cpp',
+    # 实测对比(齐尔领主 BOSS 名字截图):
+    #   easyocr        -> '齐尔领主的折磨回响 +3' (完美, 原图即可, 0.23s)
+    #   openvino_python -> '齐尔领王的折磨回响+3'  (需放大2倍, "尔"误识为"王", 5.72s)
+    #   openvino_cpp    -> '' (完全失败)
+    'engine': 'easyocr',
     'lang': 'ch',
     'preprocess': 'auto',
     'cache_ttl': 2.0,
@@ -49,7 +53,9 @@ D4_REGIONS = {
 
 VOICE_CONFIG = {
     'stt_engine': 'google',
-    'tts_engine': 'melotts',
+    # TTS 引擎: edge_tts(微软在线,音质好,需联网) / melotts(本地 OpenVINO) / pyttsx3(系统)
+    # 实测 melotts C++ 子进程在 BOSS 战播报时静默失败,改用 edge_tts
+    'tts_engine': 'edge_tts',
     'language': 'zh-CN',
     'tts_voice': 'zh-CN-XiaoxiaoNeural',
     'tts_rate': 180,
@@ -142,14 +148,17 @@ SDK_CONFIG = {
 LOG_LEVEL = 'INFO'
 LOG_FILE = os.path.join(BASE_DIR, 'game_assistant.log')
 
-# 智谱 GLM LLM 配置(用于在线搜索攻略汇总)
-# API Key 从环境变量 ZHIPU_API_KEY 读取,或直接填入下方
+# LLM 配置(用于在线搜索攻略汇总)
+# provider:
+#   'gas'   - 使用游戏助手服务端内置 LLM(Qwen3,通过 Knowledge query 接口,无需 API Key)
+#   'zhipu' - 使用智谱 GLM(需要 API Key,作为回退)
 LLM_CONFIG = {
-    'provider': 'zhipu',
+    'provider': 'gas',
+    # 智谱 GLM 回退配置(provider='zhipu' 时使用)
     'api_key': os.environ.get('ZHIPU_API_KEY', ''),
     'model': 'glm-4-flash',
     'base_url': 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-    'timeout': 15,
+    'timeout': 30,
     'max_search_results': 8,
 }
 

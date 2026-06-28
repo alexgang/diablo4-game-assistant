@@ -3,7 +3,7 @@
 语音助手模块 - 语音输入识别 + 意图解析 + 语音回复
 
 功能：
-1. 语音输入：支持多种引擎（Google/Sphinx/Whisper）识别玩家语音
+1. 语音输入：优先用服务端 ASR(Qwen ASR,OpenVINO iGPU),本地引擎(Google/Sphinx/Whisper)回退
 2. 意图识别：解析玩家语音为搜索意图（查装备/查BOSS/查技能等）
 3. 语音输出：TTS语音回复玩家（pyttsx3/edge-tts）
 4. 热词唤醒：支持唤醒词激活语音输入
@@ -85,6 +85,9 @@ class VoiceInput:
         self.use_sdk_asr = use_sdk_asr
         self.sdk = None
         self.sdk_available = False
+        # 录音静音检测阈值(统一来源,recognizer 为 None 时也能用)
+        self._energy_threshold = 300
+        self._pause_threshold = 0.8
 
         if self.use_sdk_asr:
             try:
@@ -99,12 +102,23 @@ class VoiceInput:
 
         if SPEECH_REC_AVAILABLE:
             self.recognizer = sr.Recognizer()
-            self.recognizer.energy_threshold = 300
+            self.recognizer.energy_threshold = self._energy_threshold
             self.recognizer.dynamic_energy_threshold = True
-            self.recognizer.pause_threshold = 0.8
+            self.recognizer.pause_threshold = self._pause_threshold
+            self._init_microphone()
+        elif self.sdk_available:
+            # speech_recognition 不可用但 SDK ASR 可用:仍可录音(用 pyaudio/sounddevice)
+            logger.info("speech_recognition 不可用,SDK ASR 可用,启用语音输入(仅服务端识别)")
             self._init_microphone()
 
         self._init_engine(engine)
+
+        # SDK ASR 可用时强制启用语音输入(即使本地引擎不可用)
+        if self.sdk_available and not self.available:
+            self.available = True
+            if not self.engine_name:
+                self.engine_name = 'sdk'
+            logger.info("语音输入已启用(服务端 ASR 优先,本地引擎回退)")
 
     def _init_microphone(self):
         try:
@@ -287,7 +301,7 @@ class VoiceInput:
                 now = time.time()
                 elapsed = now - start_time
 
-                if energy > self.recognizer.energy_threshold:
+                if energy > self._energy_threshold:
                     if not started:
                         started = True
                     silence_start = None
@@ -298,7 +312,7 @@ class VoiceInput:
                 if not started and elapsed > timeout:
                     raise sr.WaitTimeoutError()
 
-                if started and silence_start and (now - silence_start) > self.recognizer.pause_threshold:
+                if started and silence_start and (now - silence_start) > self._pause_threshold:
                     break
 
                 if phrase_time_limit and started and elapsed > phrase_time_limit:
@@ -368,7 +382,7 @@ class VoiceInput:
                 now = time.time()
                 elapsed = now - start_time
 
-                if energy > self.recognizer.energy_threshold:
+                if energy > self._energy_threshold:
                     if not started:
                         started = True
                     silence_start = None
@@ -379,7 +393,7 @@ class VoiceInput:
                 if not started and elapsed > timeout:
                     raise sr.WaitTimeoutError()
 
-                if started and silence_start and (now - silence_start) > self.recognizer.pause_threshold:
+                if started and silence_start and (now - silence_start) > self._pause_threshold:
                     break
 
                 if phrase_time_limit and started and elapsed > phrase_time_limit:
@@ -402,21 +416,38 @@ class VoiceInput:
                     pass
 
     def recognize_from_file(self, audio_path):
-        """从音频文件识别"""
+        """从音频文件识别(优先用服务端 ASR)
+
+        Args:
+            audio_path: 音频文件路径(wav)
+
+        Returns:
+            str: 识别出的文字,失败返回空字符串
+        """
         if not self.available:
             return ''
 
         try:
+            # 优先用 SDK ASR 服务(直接传文件路径,无需转 AudioData)
+            if self.use_sdk_asr and self.sdk_available:
+                text = self.sdk.asr_transcribe(audio_path, hotwords=SDK_CONFIG['asr']['hotwords'])
+                if text:
+                    return text.strip()
+                logger.warning("SDK ASR 文件识别失败,回退到本地引擎")
+
+            # 回退:本地引擎
             if self.engine_name == 'whisper' and self.whisper_model:
                 result = self.whisper_model.transcribe(audio_path, language='zh')
                 return result.get('text', '').strip()
 
-            with sr.AudioFile(audio_path) as source:
-                audio = self.recognizer.record(source)
-                return self._recognize(audio)
+            if self.recognizer is not None:
+                with sr.AudioFile(audio_path) as source:
+                    audio = self.recognizer.record(source)
+                    return self._recognize(audio)
         except Exception as e:
             logger.error(f"文件识别失败: {e}")
             return ''
+        return ''
 
     def _transcribe_with_sdk(self, audio_data):
         """使用SDK ASR服务进行语音识别"""
@@ -621,22 +652,32 @@ class VoiceOutput:
                 '--input_file', tmp_txt,
                 '--output_filename', tmp_wav_base,
             ]
-            subprocess.run(cmd, capture_output=True, timeout=15, env=env, cwd=_CPP_TTS_DIR, check=True)
+            logger.info(f"[MeloTTS] 启动子进程: {os.path.basename(_CPP_TTS_EXE)}, lang={lang}, text={len(text)}字")
+            result = subprocess.run(cmd, capture_output=True, timeout=30, env=env, cwd=_CPP_TTS_DIR, check=False)
+            if result.returncode != 0:
+                logger.error(f"[MeloTTS] 子进程失败: rc={result.returncode}, stderr={result.stderr[:500] if result.stderr else ''}")
+                return
+            logger.info(f"[MeloTTS] 子进程成功完成, stdout={result.stdout[:200] if result.stdout else ''}")
 
             expected_wav = f'{tmp_wav_base}_{lang}-MIX-EN.wav' if lang == 'ZH' else f'{tmp_wav_base}_{lang}-Default.wav'
             if not os.path.isfile(expected_wav):
                 import glob
                 wav_files = glob.glob(f'{tmp_wav_base}_*.wav')
+                logger.info(f"[MeloTTS] 预期wav不存在, glob 找到: {wav_files}")
                 if wav_files:
                     expected_wav = wav_files[0]
             if os.path.isfile(expected_wav):
+                wav_size = os.path.getsize(expected_wav)
+                logger.info(f"[MeloTTS] 播放音频: {os.path.basename(expected_wav)} ({wav_size} 字节)")
                 self._play_audio_file(expected_wav)
+            else:
+                logger.error(f"[MeloTTS] 未生成任何 wav 文件 (base={tmp_wav_base})")
         except subprocess.TimeoutExpired:
-            logger.error("meloTTS_ov.exe timeout (15s)")
+            logger.error("[MeloTTS] meloTTS_ov.exe timeout (30s)")
         except subprocess.CalledProcessError as e:
-            logger.error(f"meloTTS_ov.exe failed: rc={e.returncode}")
+            logger.error(f"[MeloTTS] meloTTS_ov.exe failed: rc={e.returncode}")
         except Exception as e:
-            logger.error(f"MeloTTS播报失败: {e}")
+            logger.error(f"[MeloTTS] MeloTTS播报失败: {e}", exc_info=True)
         finally:
             for pattern in [tmp_wav_base + '_*.wav', tmp_txt]:
                 try:
@@ -650,7 +691,10 @@ class VoiceOutput:
                     pass
 
     def _speak_edge_tts(self, text):
-        """使用Edge TTS播报"""
+        """使用Edge TTS播报(微软在线 TTS,音质好,需联网)
+
+        在子线程中调用,用 asyncio.run 创建新事件循环。
+        """
         import asyncio
         import tempfile
         import os
@@ -658,26 +702,31 @@ class VoiceOutput:
         async def _async_speak():
             voice = self.voice or 'zh-CN-XiaoxiaoNeural'
             communicate = edge_tts.Communicate(text, voice)
-            tmp_path = os.path.join(tempfile.gettempdir(), f'game_assistant_tts_{int(time.time())}.mp3')
+            # 用进程ID+时间戳避免并发冲突
+            tmp_path = os.path.join(
+                tempfile.gettempdir(),
+                f'game_tts_{os.getpid()}_{int(time.time() * 1000)}.mp3'
+            )
             await communicate.save(tmp_path)
             return tmp_path
 
+        tmp_path = None
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    tmp_path = loop.run_in_executor(
-                        pool,
-                        lambda: asyncio.run(_async_speak())
-                    )
-                    tmp_path = asyncio.run(asyncio.wait_for(tmp_path, timeout=15))
-            else:
-                tmp_path = asyncio.run(_async_speak())
-        except RuntimeError:
-            tmp_path = asyncio.run(_async_speak())
+            # 子线程里没有运行中的事件循环,直接 asyncio.run
+            # 加 30 秒超时防止网络卡死阻塞 TTS 线程
+            tmp_path = asyncio.run(asyncio.wait_for(_async_speak(), timeout=30))
+            logger.info(f"[EdgeTTS] 合成完成: {os.path.basename(tmp_path)}, {len(text)} 字")
+        except asyncio.TimeoutError:
+            logger.error("[EdgeTTS] 合成超时 (30s)")
+            return
+        except Exception as e:
+            logger.error(f"[EdgeTTS] 合成失败: {e}", exc_info=True)
+            return
 
-        self._play_audio_file(tmp_path)
+        if tmp_path and os.path.isfile(tmp_path):
+            self._play_audio_file(tmp_path)
+        else:
+            logger.error("[EdgeTTS] 合成完成但文件不存在")
 
     def _speak_pyttsx3(self, text):
         """使用pyttsx3播报"""
@@ -686,7 +735,12 @@ class VoiceOutput:
             self.pyttsx3_engine.runAndWait()
 
     def _play_audio_file(self, filepath):
-        """播放音频文件"""
+        """播放音频文件(支持 wav/mp3)
+
+        优先用 pygame(支持 mp3),其次用 Windows Media Player(支持 mp3),
+        最后用 PowerShell SoundPlayer(仅 wav)。
+        WMP 通过文件时长估算等待时间,避免 playState 轮询死循环。
+        """
         import os
         if not os.path.exists(filepath):
             return
@@ -699,11 +753,35 @@ class VoiceOutput:
                     time.sleep(0.1)
                 pygame.mixer.music.unload()
             else:
-                import subprocess
-                subprocess.Popen(
-                    ['powershell', '-c', f'(New-Object Media.SoundPlayer "{filepath}").PlaySync()'],
-                    creationflags=0x08000000,
-                ).wait()
+                ext = os.path.splitext(filepath)[1].lower()
+                if ext == '.mp3':
+                    # 用 Windows Media Player 播放 mp3(无依赖)
+                    # 通过 WMP COM 获取时长,估算等待,避免 playState 死循环
+                    import subprocess
+                    # 转义路径中的单引号(PowerShell)
+                    ps_path = filepath.replace("'", "''")
+                    ps_cmd = (
+                        f'$p = New-Object -ComObject WMPlayer.OCX; '
+                        f'$p.settings.autoStart = $true; '
+                        f'$p.URL = "{ps_path}"; '
+                        f'Start-Sleep -Milliseconds 500; '
+                        f'$dur = 10; '
+                        f'try {{ $dur = [math]::Ceiling($p.currentMedia.duration) + 1 }} catch {{}}; '
+                        f'Start-Sleep -Seconds $dur; '
+                        f'$p.close()'
+                    )
+                    subprocess.run(
+                        ['powershell', '-c', ps_cmd],
+                        creationflags=0x08000000,
+                        timeout=60,
+                    )
+                else:
+                    # wav 用 SoundPlayer
+                    import subprocess
+                    subprocess.Popen(
+                        ['powershell', '-c', f'(New-Object Media.SoundPlayer "{filepath}").PlaySync()'],
+                        creationflags=0x08000000,
+                    ).wait()
         except Exception as e:
             logger.error(f"音频播放失败: {e}")
         finally:
@@ -1053,13 +1131,15 @@ class VoiceAssistant:
             name = data.get('name', data.get('title', query))
             return f'找到相关信息：{name}'
 
-    def start_continuous_listening(self, wake_word=None, callback=None):
-        """
-        启动持续监听模式
+    def start_continuous_listening(self, wake_word='diablo', callback=None,
+                                  cooldown=10.0, min_text_length=2):
+        """启动持续监听模式（唤醒词激活）
 
         Args:
-            wake_word: 唤醒词，如"小助手"
+            wake_word: 唤醒词，默认 'diablo'。检测到唤醒词后激活语音交互。
             callback: 结果回调函数
+            cooldown: 唤醒词触发后的冷却时间（秒），避免频繁误激活
+            min_text_length: 识别文本最小长度，短于此长度视为噪声丢弃
         """
         if self.is_listening:
             return
@@ -1067,22 +1147,48 @@ class VoiceAssistant:
         self.is_listening = True
         self._stop_event.clear()
         self.on_result = callback
+        self._wake_word = wake_word
 
         def _listen_loop():
-            logger.info("持续监听模式已启动")
+            logger.info(f"持续监听已启动 (唤醒词='{wake_word}', 冷却={cooldown}s)")
+            last_trigger_time = 0.0
             while not self._stop_event.is_set():
                 try:
                     text = self.voice_input.listen(timeout=3, phrase_time_limit=8)
                     if not text:
                         continue
 
-                    if wake_word and wake_word not in text:
+                    # 噪声过滤:文本太短视为噪声
+                    text = text.strip()
+                    if len(text) < min_text_length:
                         continue
 
+                    # 唤醒词检测
                     if wake_word:
-                        text = text.replace(wake_word, '', 1).strip()
+                        if wake_word.lower() not in text.lower():
+                            continue
+                        # 冷却时间检查(避免频繁误激活)
+                        now = time.time()
+                        if now - last_trigger_time < cooldown:
+                            logger.debug(f"唤醒词冷却中,跳过 (距上次 {now-last_trigger_time:.1f}s)")
+                            continue
+                        last_trigger_time = now
+                        # 去除唤醒词,提取实际指令
+                        text = re.sub(re.escape(wake_word), '', text, flags=re.IGNORECASE).strip()
 
-                    result = self.process_text(text)
+                    if not text:
+                        # 只说了唤醒词,没有指令 → 待命响应
+                        result = {
+                            'text': wake_word,
+                            'intent': 'wake',
+                            'query': '',
+                            'response': '我在听,请说指令',
+                            'spoken': True,
+                        }
+                        if self.voice_output.available:
+                            self.voice_output.speak(result['response'], blocking=False)
+                    else:
+                        result = self.process_text(text)
 
                     if self.on_result:
                         self.on_result(result)
@@ -1092,7 +1198,7 @@ class VoiceAssistant:
                     time.sleep(1)
 
             self.is_listening = False
-            logger.info("持续监听模式已停止")
+            logger.info("持续监听已停止")
 
         self._listen_thread = threading.Thread(target=_listen_loop, daemon=True)
         self._listen_thread.start()

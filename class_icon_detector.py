@@ -55,6 +55,19 @@ CLASS_FROM_SKILL_BAR_SCENE_ID = {
     f"{SKILL_BAR_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
 }
 
+# ============== 技能池图标在 Vision 索引中的 scene_id ==============
+# 每个职业的25个技能池图标作为一个 scene 添加到 Vision 索引
+# 查询时,技能栏图标匹配到某职业的任何技能池图标 → 该职业
+SKILL_ICON_SCENE_PREFIX = "skill_icon_"
+CLASS_FROM_SKILL_ICON_SCENE_ID = {
+    f"{SKILL_ICON_SCENE_PREFIX}barbarian": D4Class.BARBARIAN,
+    f"{SKILL_ICON_SCENE_PREFIX}rogue": D4Class.ROGUE,
+    f"{SKILL_ICON_SCENE_PREFIX}sorcerer": D4Class.SORCERER,
+    f"{SKILL_ICON_SCENE_PREFIX}druid": D4Class.DRUID,
+    f"{SKILL_ICON_SCENE_PREFIX}necromancer": D4Class.NECROMANCER,
+    f"{SKILL_ICON_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
+}
+
 
 # ============== 主属性 → 职业映射（用于 OCR 辅助识别） ==============
 # D4 只有 4 种核心属性：力量/敏捷/智力/意志。
@@ -150,21 +163,20 @@ def crop_right_panel(frame: np.ndarray, ratio: float = 0.5) -> Optional[np.ndarr
 
 def crop_skill_bar(frame: np.ndarray) -> Optional[np.ndarray]:
     """
-    裁剪游戏最下方的技能栏区域
+    裁剪底部技能栏(6个当前装备的技能图标)
 
-    D4 技能栏在所有游戏界面都可见(战斗/城镇/地图等),
-    包含当前职业的 6 个技能图标 + 左侧血瓶/怒气/等 + 右侧Buff栏。
-    不同职业的技能图标完全不同,是识别职业的可靠依据。
+    技能栏在所有游戏界面(战斗/城镇/地图/装备等)都可见,无需打开技能界面。
+    包含6个当前装备的技能图标,通过逐个图标与技能池数据库匹配来识别职业。
 
-    相对坐标(2560x1600 实测校准):
-    - 横向: 30% ~ 70% (技能图标主体区域,避开两侧血瓶/Buff)
-    - 纵向: 85% ~ 97% (画面最底部技能栏)
+    相对坐标(与 config.py 的 skill_bar 区域一致):
+    - 横向: 30% ~ 70% (技能栏水平范围)
+    - 纵向: 85% ~ 97% (屏幕底部技能栏)
 
     Args:
         frame: BGR 全屏截图
 
     Returns:
-        技能栏截图,或 None
+        技能栏截图(含6个图标),或 None
     """
     if frame is None or frame.size == 0:
         return None
@@ -177,6 +189,31 @@ def crop_skill_bar(frame: np.ndarray) -> Optional[np.ndarray]:
         return None
     bar = frame[y_min:y_max, x_min:x_max]
     return bar if bar.size > 0 else None
+
+
+def split_skill_bar_icons(skill_bar: np.ndarray, num_icons: int = 6) -> list:
+    """
+    将技能栏分割为 num_icons 个图标
+
+    Args:
+        skill_bar: 技能栏截图(含6个图标水平排列)
+        num_icons: 图标数量,默认6
+
+    Returns:
+        图标列表 [np.ndarray, ...]
+    """
+    if skill_bar is None or skill_bar.size == 0:
+        return []
+    h, w = skill_bar.shape[:2]
+    slot_w = w // num_icons
+    icons = []
+    for i in range(num_icons):
+        x1 = i * slot_w
+        x2 = (i + 1) * slot_w if i < num_icons - 1 else w
+        icon = skill_bar[:, x1:x2]
+        if icon.size > 0:
+            icons.append(icon)
+    return icons
 
 
 def detect_class_from_attributes(text: str) -> Optional[D4Class]:
@@ -356,8 +393,10 @@ class ClassIconDetector:
         主入口：从全屏截图识别当前角色职业
 
         优先级：
-        1. SDK Vision 查询（如果可用且已建索引）
-        2. 本地模板匹配（如果有模板文件）
+        1. 技能栏图标识别（所有界面可见,最通用,战斗/城镇/地图都能用）
+        2. 职业图标识别（装备/巅峰/技能树界面,右上角或顶部中央）
+        3. SDK Vision 查询（如果可用且已建索引）
+        4. 本地模板匹配（如果有模板文件）
 
         Args:
             frame: BGR 全屏截图
@@ -367,13 +406,20 @@ class ClassIconDetector:
         """
         # 重置来源标记,供调用方判断识别来源(icon/skill_bar)
         self.last_detect_source = None
+        logger.info(f"开始职业识别 (frame shape={frame.shape})")
 
-        # 多个可能的图标位置（D4 不同界面下职业图标位置不同）
+        # 策略1: 技能栏图标识别（所有界面都可见,最通用）
+        cls = self.detect_via_skill_bar(frame)
+        if cls:
+            self.last_detect_source = 'skill_bar'
+            logger.info(f"技能栏识别到职业: {cls.value}")
+            return cls
+
+        # 策略2: 职业图标识别（D4 不同界面下职业图标位置不同）
         crop_funcs = [
             ('top_right', crop_class_icon_region),     # 装备/巅峰界面：右上角
             ('top_center', crop_class_icon_top_center),  # 技能树界面：顶部中央
         ]
-        logger.info(f"开始职业图标识别 (frame shape={frame.shape})")
         for region_name, crop_func in crop_funcs:
             icon = crop_func(frame)
             if icon is None or icon.size == 0:
@@ -393,13 +439,6 @@ class ClassIconDetector:
                 logger.info(f"在 {region_name} 区域（模板）识别到职业: {cls.value}")
                 return cls
             logger.info(f"  {region_name}: 未匹配")
-
-        # 策略1.5: 技能栏图标识别（所有界面都可见,战斗界面也能用）
-        cls = self.detect_via_skill_bar(frame)
-        if cls:
-            self.last_detect_source = 'skill_bar'
-            logger.info(f"技能栏识别到职业: {cls.value}")
-            return cls
 
         logger.info("所有区域都未能识别职业")
         return None
@@ -472,16 +511,197 @@ class ClassIconDetector:
             logger.debug(f"Vision 技能栏查询失败: {e}")
         return None
 
-    def detect_via_skill_bar_template(self, skill_bar: np.ndarray, threshold: float = 0.6) -> Optional[D4Class]:
-        """
-        通过本地模板匹配识别技能栏（不依赖 SDK 服务）
+    def _load_skill_pool_template(self, class_name: str) -> Optional[np.ndarray]:
+        """加载某职业技能池模板(模板图片上方区域,仅旧版整图匹配用)
 
-        模板文件命名: skill_bar_<职业>.png (由 save_skill_bar_template 自动采集)
-        使用 cv2.matchTemplate (TM_CCOEFF_NORMED) 进行归一化相关系数匹配。
+        模板布局(752x768):
+        - 上方 75% (y=0-564) = 技能池,包含该职业所有可用技能图标(5行)
+        - 下方 25% (y=564-752) = 采集时角色使用的6个技能(不作为职业特征)
+        """
+        tpl_path = os.path.join(self.templates_dir, f'skill_bar_{class_name}.png')
+        if not os.path.exists(tpl_path):
+            return None
+        tpl = cv2.imread(tpl_path)
+        if tpl is None or tpl.size == 0:
+            return None
+        h = tpl.shape[0]
+        # 取上方 75% 作为技能池
+        return tpl[:int(h * 0.75), :]
+
+    def detect_via_skill_bar_icons(self, skill_bar: np.ndarray) -> Optional[D4Class]:
+        """
+        通过 Vision API 逐个图标匹配识别职业(主方案)
+
+        原理:
+        - 技能栏含6个当前装备的技能图标,在所有游戏界面都可见(无需打开技能界面)
+        - 将技能栏分割为6个图标,每个图标缩放到 100x100(与数据库图标尺寸一致)
+        - 数据库中预先存入每个职业的25个技能池图标(scene_id=skill_icon_<职业>, 100x100)
+        - 技能栏图标匹配到某职业的技能池图标 → 该职业得一票
+        - 投票最多的职业即为识别结果
+
+        关键:查询图标必须缩放到与数据库图标相同的尺寸(100x100),
+        否则 Vision API 会因尺寸差异过大而匹配不到 skill_icon_* 场景。
 
         Args:
-            skill_bar: 待识别的技能栏截图
-            threshold: 匹配阈值(0~1,越高越严格)
+            skill_bar: 技能栏截图(含6个图标)
+
+        Returns:
+            D4Class 或 None
+        """
+        if self.sdk is None:
+            logger.debug("SDK 未注入,跳过技能栏图标匹配")
+            return None
+        if skill_bar is None or skill_bar.size == 0:
+            return None
+
+        # 检查技能栏是否有效(非纯色)
+        try:
+            if float(skill_bar.std()) < 5:
+                logger.debug(f"技能栏为纯色区域(std={skill_bar.std():.2f}),跳过")
+                return None
+        except Exception:
+            return None
+
+        # 分割为6个图标
+        icons = split_skill_bar_icons(skill_bar, num_icons=6)
+        if not icons:
+            logger.debug("技能栏分割图标失败")
+            return None
+
+        logger.info(f"技能栏图标匹配: bar={skill_bar.shape}, {len(icons)}个图标每个约{icons[0].shape}")
+
+        # 统计每个职业的命中数和分数
+        class_hits = {}  # {D4Class: int}
+        class_scores = {}  # {D4Class: [score, ...]}
+
+        tmp_dir = os.path.join(self.templates_dir, '_query_icons')
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        # 数据库图标尺寸(100x100),查询图标缩放到此尺寸以提高匹配率
+        DB_ICON_SIZE = (100, 100)
+
+        for i, icon in enumerate(icons):
+            # 跳过纯色图标(空技能槽)
+            try:
+                if float(icon.std()) < 5:
+                    logger.debug(f"  图标{i}: 纯色,跳过")
+                    continue
+            except Exception:
+                continue
+
+            # 缩放到与数据库图标相同尺寸(100x100)
+            try:
+                icon_resized = cv2.resize(icon, DB_ICON_SIZE, interpolation=cv2.INTER_AREA)
+            except Exception as e:
+                logger.debug(f"  图标{i} 缩放失败: {e}")
+                continue
+
+            icon_path = os.path.join(tmp_dir, f'query_icon_{i}.png')
+            cv2.imwrite(icon_path, icon_resized)
+
+            try:
+                # 降低阈值(threshold=0, threshold_2=0)以获取候选结果
+                # 先用 basic 模式(快),无结果再用 accurate 模式
+                results = self.sdk.vision_query(
+                    self.instance_id, icon_path,
+                    topk=10, threshold=0, threshold_2=0, mode='basic',
+                )
+                if not results:
+                    results = self.sdk.vision_query(
+                        self.instance_id, icon_path,
+                        topk=10, threshold=0, threshold_2=0, mode='accurate',
+                    )
+                if not results:
+                    logger.debug(f"  图标{i}: 无匹配结果")
+                    continue
+
+                # 只看 skill_icon_* 结果,取 top1 投票(避免某职业因图标多而过度匹配)
+                skill_results = [
+                    r for r in results
+                    if r.get('scene_id', '').startswith('skill_icon_')
+                ]
+                if not skill_results:
+                    logger.debug(f"  图标{i}: 无 skill_icon 匹配结果")
+                    continue
+
+                # top1 skill_icon 结果(最相似的职业技能图标)
+                top1 = skill_results[0]
+                top1_scene = top1.get('scene_id', '')
+                top1_score = float(top1.get('score', 0))
+                cls = CLASS_FROM_SKILL_ICON_SCENE_ID.get(top1_scene)
+                if cls is None:
+                    continue
+
+                # 显示前3个 skill_icon 结果(调试用)
+                top3_str = " ".join(
+                    f"{r.get('scene_id', '').replace('skill_icon_', '')}({r.get('score', 0):.3f})"
+                    for r in skill_results[:3]
+                )
+                logger.info(f"  图标{i}: {top3_str}")
+
+                # 分数低于阈值不投票(防止低置信度匹配干扰投票)
+                if top1_score < 0.60:
+                    logger.debug(f"  图标{i}: top1分数 {top1_score:.3f} < 0.60,不投票")
+                    continue
+
+                class_hits[cls] = class_hits.get(cls, 0) + 1
+                class_scores.setdefault(cls, []).append(top1_score)
+            except Exception as e:
+                logger.debug(f"  图标{i} 查询失败: {e}")
+                continue
+
+        if not class_hits:
+            logger.info("技能栏图标未匹配到任何职业(所有图标分数 < 0.60 或无 skill_icon 结果)")
+            return None
+
+        # 投票:选 hits 最多的职业,hits 相同时选 avg score 最高的
+        def _vote_score(cls_item):
+            cls, hits = cls_item
+            scores = class_scores.get(cls, [])
+            avg_score = sum(scores) / len(scores) if scores else 0
+            return (hits, avg_score)
+
+        best_cls, best_hits = max(class_hits.items(), key=_vote_score)
+        best_scores = class_scores.get(best_cls, [])
+        best_avg = sum(best_scores) / len(best_scores) if best_scores else 0
+
+        # 第二名(用于判断区分度)
+        sorted_classes = sorted(class_hits.items(), key=_vote_score, reverse=True)
+        second_cls = sorted_classes[1][0] if len(sorted_classes) > 1 else None
+        second_hits = sorted_classes[1][1] if len(sorted_classes) > 1 else 0
+        second_scores = class_scores.get(second_cls, []) if second_cls else []
+        second_avg = sum(second_scores) / len(second_scores) if second_scores else 0
+
+        logger.info(
+            f"技能栏图标投票(top1): {best_cls.value} hits={best_hits} avg={best_avg:.3f} "
+            f"(第二名 {second_cls.value if second_cls else '无'} hits={second_hits} avg={second_avg:.3f})"
+        )
+
+        # 要求最佳职业 hits >= 2,且比第二名多至少1票(防止误匹配)
+        if best_hits >= 2 and best_hits > second_hits:
+            return best_cls
+
+        # 如果只有1个图标命中,且分数较高(>0.75),也接受
+        if best_hits >= 1 and best_avg >= 0.75 and best_avg > second_avg + 0.05:
+            logger.info(f"单图标高置信匹配: {best_cls.value} (avg={best_avg:.3f})")
+            return best_cls
+
+        logger.info(
+            f"投票区分度不足: {best_cls.value} hits={best_hits} "
+            f"vs 第二名 hits={second_hits},不返回结果"
+        )
+        return None
+
+    def detect_via_skill_bar_template(self, skill_bar: np.ndarray, threshold: float = 0.6) -> Optional[D4Class]:
+        """
+        通过技能池整图匹配识别职业(旧版,仅技能界面打开时有效,作为回退)
+
+        注意:此方法只在按S键打开技能界面时有效,因为需要技能池区域可见。
+        现已作为回退方案,主方案是 detect_via_skill_bar_icons(Vision API图标匹配)。
+
+        Args:
+            skill_bar: 待识别的技能池+技能栏合并截图
+            threshold: 匹配阈值(0~1,默认0.6)
 
         Returns:
             D4Class 或 None
@@ -489,8 +709,25 @@ class ClassIconDetector:
         if skill_bar is None or skill_bar.size == 0:
             return None
 
+        h = skill_bar.shape[0]
+        # 实时画面的技能池(上方75%) - 仅技能界面打开时存在
+        live_pool = skill_bar[:int(h * 0.75), :]
+        if live_pool.size == 0:
+            return None
+
+        # 检查是否是有效的技能池区域(非纯色)
+        try:
+            if float(live_pool.std()) < 5:
+                return None
+        except Exception:
+            return None
+
+        logger.info(f"技能池整图匹配(回退): live_pool={live_pool.shape}")
+
         best_class = None
         best_score = -1.0
+        second_score = -1.0
+
         for class_name, cls in [
             ('barbarian', D4Class.BARBARIAN),
             ('rogue', D4Class.ROGUE),
@@ -499,38 +736,51 @@ class ClassIconDetector:
             ('necromancer', D4Class.NECROMANCER),
             ('spiritborn', D4Class.SPIRITBORN),
         ]:
-            tpl_path = os.path.join(self.templates_dir, f'skill_bar_{class_name}.png')
-            if not os.path.exists(tpl_path):
+            tpl_pool = self._load_skill_pool_template(class_name)
+            if tpl_pool is None:
                 continue
-            tpl = cv2.imread(tpl_path)
-            if tpl is None or tpl.size == 0:
-                continue
+
             try:
-                # 调整模板与目标为相同尺寸(适配不同分辨率)
-                tpl_resized = cv2.resize(tpl, (skill_bar.shape[1], skill_bar.shape[0]))
-                result = cv2.matchTemplate(skill_bar, tpl_resized, cv2.TM_CCOEFF_NORMED)
-                score = float(result.max())
-                logger.debug(f"技能栏模板 {class_name}: score={score:.3f}")
+                if live_pool.shape != tpl_pool.shape:
+                    tpl_resized = cv2.resize(tpl_pool, (live_pool.shape[1], live_pool.shape[0]))
+                else:
+                    tpl_resized = tpl_pool
+
+                res = cv2.matchTemplate(live_pool, tpl_resized, cv2.TM_CCOEFF_NORMED)
+                score = float(res.max())
+
+                logger.debug(f"技能池匹配 {class_name}: score={score:.3f}")
+
                 if score > best_score:
+                    second_score = best_score
                     best_score = score
                     best_class = cls
+                elif score > second_score:
+                    second_score = score
             except Exception as e:
-                logger.debug(f"技能栏模板匹配 {class_name} 失败: {e}")
+                logger.debug(f"技能池匹配 {class_name} 失败: {e}")
 
-        if best_class and best_score >= threshold:
+        if best_class and best_score >= threshold and (best_score - second_score) > 0.2:
             logger.info(
-                f"技能栏模板匹配: {best_class.value} (score={best_score:.2f})"
+                f"技能池匹配: {best_class.value} (score={best_score:.2f}, 第二名={second_score:.2f})"
             )
             return best_class
+
         if best_class:
-            logger.debug(
-                f"技能栏最佳匹配 {best_class.value} score={best_score:.2f} 未达阈值 {threshold}"
+            logger.info(
+                f"技能池最佳匹配 {best_class.value} score={best_score:.2f} "
+                f"(第二名={second_score:.2f}, 差距不足或未达阈值)"
             )
         return None
 
     def detect_via_skill_bar(self, frame: np.ndarray) -> Optional[D4Class]:
         """
-        技能栏识别入口:裁剪技能栏 → Vision查询 → 本地模板匹配兜底
+        技能栏识别入口:裁剪技能栏 → Vision图标匹配(优先) → 整图匹配(回退)
+
+        优先级:
+        1. Vision API 图标匹配(主方案):分割6个图标,逐个查询技能池图标数据库,投票
+        2. 技能池整图匹配(回退):仅技能界面打开时有效
+        3. Vision 技能栏查询(辅助):整栏查询
 
         Args:
             frame: BGR 全屏截图
@@ -545,13 +795,18 @@ class ClassIconDetector:
 
         logger.info(f"技能栏裁剪成功 shape={skill_bar.shape}")
 
-        # 方案1: SDK Vision
-        cls = self.detect_via_skill_bar_vision(skill_bar)
+        # 方案1: Vision API 图标匹配(主方案,所有界面通用)
+        cls = self.detect_via_skill_bar_icons(skill_bar)
         if cls:
             return cls
 
-        # 方案2: 本地模板匹配
+        # 方案2: 技能池整图匹配(回退,仅技能界面打开时有效)
         cls = self.detect_via_skill_bar_template(skill_bar)
+        if cls:
+            return cls
+
+        # 方案3: SDK Vision 整栏查询(辅助)
+        cls = self.detect_via_skill_bar_vision(skill_bar)
         if cls:
             return cls
 

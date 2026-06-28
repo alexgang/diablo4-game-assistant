@@ -7,7 +7,7 @@ echo            Diablo4 Game Assistant
 echo ==================================================
 echo.
 echo Starting, please wait...
-echo   - Auto detect and start SDK server (if not running)
+echo   - Auto detect and start Intel AI Gaming Assistant library server (if not running)
 echo   - Auto launch the assistant main program
 echo   - Drag window by clicking the top header area
 echo.
@@ -27,7 +27,7 @@ if exist "pylibs\python.exe" (
     set "PYTHON=python"
 )
 
-REM Launch main program (auto-starts SDK server if needed)
+REM Launch main program (auto-starts Intel AI Gaming Assistant library server if needed)
 "%PYTHON%" main.py
 
 REM Pause on abnormal exit so errors are visible

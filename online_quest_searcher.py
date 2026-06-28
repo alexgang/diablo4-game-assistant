@@ -151,22 +151,8 @@ def _strip_html_tags(text):
     return text
 
 
-def _call_zhipu_llm(query, search_results):
-    """调用智谱 GLM 对搜索结果进行汇总
-
-    Args:
-        query: 用户搜索的任务名
-        search_results: Bing 搜索结果列表
-
-    Returns:
-        dict: {'best_url': str, 'summary': str, 'title': str} 或 None
-    """
-    api_key = LLM_CONFIG.get('api_key', '')
-    if not api_key:
-        logger.warning("[OnlineSearch] 智谱 API Key 未配置(ZHIPU_API_KEY 环境变量)")
-        return None
-
-    # 构造搜索结果文本
+def _build_llm_prompt(query, search_results):
+    """构造 LLM 汇总 prompt(供所有 LLM provider 共用)"""
     results_text = ""
     for i, r in enumerate(search_results, 1):
         results_text += (
@@ -189,6 +175,119 @@ def _call_zhipu_llm(query, search_results):
         f"请用 JSON 格式回复(只输出 JSON,不要其他文字):\n"
         f'{{"best_index": <结果编号>, "summary": "<50字以内的攻略汇总说明>"}}'
     )
+    return prompt
+
+
+def _parse_llm_response(content, search_results):
+    """解析 LLM 回复的 JSON,返回最佳结果
+
+    Args:
+        content: LLM 回复的文本(含 JSON)
+        search_results: Bing 搜索结果列表
+
+    Returns:
+        dict: {'best_url', 'title', 'summary'} 或 None
+    """
+    if not content:
+        return None
+
+    content = content.strip()
+    logger.info(f"[OnlineSearch] LLM 回复: {content[:200]}")
+
+    # 容错:去掉可能的 markdown 代码块标记
+    content_clean = content
+    if content_clean.startswith('```'):
+        content_clean = re.sub(r'^```(?:json)?\s*', '', content_clean)
+        content_clean = re.sub(r'\s*```$', '', content_clean)
+
+    try:
+        parsed = json.loads(content_clean)
+    except json.JSONDecodeError as e:
+        logger.warning(f"[OnlineSearch] LLM 回复 JSON 解析失败: {e}")
+        return None
+
+    best_index = int(parsed.get('best_index', 0))
+    summary = parsed.get('summary', '')
+
+    if 1 <= best_index <= len(search_results):
+        best = search_results[best_index - 1]
+        return {
+            'best_url': best['url'],
+            'title': best['title'],
+            'summary': summary,
+        }
+    logger.warning(f"[OnlineSearch] LLM 返回的 best_index={best_index} 超出范围")
+    return None
+
+
+def _call_gas_llm(query, search_results):
+    """调用游戏助手服务端内置 LLM(Qwen3)对搜索结果进行汇总
+
+    通过 Knowledge 服务的 query 接口调用本地 LLM,无需 API Key。
+    服务端 LLM 已在 gameassistanttoolserver.json 中启用(iGPU 推理)。
+
+    Args:
+        query: 用户搜索的任务名
+        search_results: Bing 搜索结果列表
+
+    Returns:
+        dict: {'best_url', 'title', 'summary'} 或 None
+    """
+    from config import SDK_CONFIG
+
+    server_url = SDK_CONFIG.get('server_url', 'http://127.0.0.1:9190').rstrip('/')
+    instance_id = SDK_CONFIG.get('instance_id', 'd4_assistant')
+    timeout = LLM_CONFIG.get('timeout', 30)
+
+    prompt = _build_llm_prompt(query, search_results)
+
+    try:
+        logger.info(f"[OnlineSearch] 调用游戏助手服务端 LLM (Qwen3) 汇总...")
+        # Knowledge query 接口:不传 knowledge_id 时走纯 LLM 回复(SSE 流式)
+        resp = requests.post(
+            f"{server_url}/knowledge/service/query/{instance_id}",
+            json={'text': prompt},
+            stream=True,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+
+        # 拼接 SSE 流的 message 字段
+        content = ''
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith('data: '):
+                continue
+            try:
+                chunk = json.loads(line[len('data: '):])
+            except json.JSONDecodeError:
+                continue
+            msg = (chunk.get('data') or {}).get('message', '')
+            content += msg
+            if chunk.get('fin') is True:
+                break
+
+        return _parse_llm_response(content, search_results)
+    except Exception as e:
+        logger.warning(f"[OnlineSearch] 游戏助手服务端 LLM 调用失败: {e}")
+        return None
+
+
+def _call_zhipu_llm(query, search_results):
+    """调用智谱 GLM 对搜索结果进行汇总(provider='zhipu' 回退方案)
+
+    Args:
+        query: 用户搜索的任务名
+        search_results: Bing 搜索结果列表
+
+    Returns:
+        dict: {'best_url': str, 'summary': str, 'title': str} 或 None
+    """
+    api_key = LLM_CONFIG.get('api_key', '')
+    if not api_key:
+        logger.warning("[OnlineSearch] 智谱 API Key 未配置(ZHIPU_API_KEY 环境变量)")
+        return None
+
+    prompt = _build_llm_prompt(query, search_results)
 
     headers = {
         'Authorization': f'Bearer {api_key}',
@@ -206,7 +305,7 @@ def _call_zhipu_llm(query, search_results):
         'base_url',
         'https://open.bigmodel.cn/api/paas/v4/chat/completions',
     )
-    timeout = LLM_CONFIG.get('timeout', 15)
+    timeout = LLM_CONFIG.get('timeout', 30)
 
     try:
         logger.info(f"[OnlineSearch] 调用智谱 GLM ({payload['model']}) 汇总...")
@@ -214,32 +313,8 @@ def _call_zhipu_llm(query, search_results):
         resp.raise_for_status()
         data = resp.json()
 
-        content = data['choices'][0]['message']['content'].strip()
-        logger.info(f"[OnlineSearch] GLM 回复: {content[:200]}")
-
-        # 解析 JSON(容错:去掉可能的 markdown 代码块标记)
-        content_clean = content
-        if content_clean.startswith('```'):
-            content_clean = re.sub(r'^```(?:json)?\s*', '', content_clean)
-            content_clean = re.sub(r'\s*```$', '', content_clean)
-
-        parsed = json.loads(content_clean)
-        best_index = int(parsed.get('best_index', 0))
-        summary = parsed.get('summary', '')
-
-        if 1 <= best_index <= len(search_results):
-            best = search_results[best_index - 1]
-            return {
-                'best_url': best['url'],
-                'title': best['title'],
-                'summary': summary,
-            }
-        logger.warning(f"[OnlineSearch] GLM 返回的 best_index={best_index} 超出范围")
-        return None
-
-    except json.JSONDecodeError as e:
-        logger.warning(f"[OnlineSearch] GLM 回复 JSON 解析失败: {e}")
-        return None
+        content = data['choices'][0]['message']['content']
+        return _parse_llm_response(content, search_results)
     except Exception as e:
         logger.warning(f"[OnlineSearch] 智谱 GLM 调用失败: {e}")
         return None
@@ -313,8 +388,17 @@ def search_and_summarize(keyword):
         logger.warning("[OnlineSearch] Bing 搜索无结果")
         return None
 
-    # 2. 优先用 LLM 汇总
-    llm_result = _call_zhipu_llm(keyword, results)
+    # 2. 优先用 LLM 汇总(根据 provider 选择)
+    provider = LLM_CONFIG.get('provider', 'gas')
+    if provider == 'zhipu':
+        llm_result = _call_zhipu_llm(keyword, results)
+    else:
+        llm_result = _call_gas_llm(keyword, results)
+        # 服务端 LLM 失败时回退到智谱 GLM(若已配置 API Key)
+        if llm_result is None and LLM_CONFIG.get('api_key'):
+            logger.info("[OnlineSearch] 服务端 LLM 失败,回退到智谱 GLM")
+            llm_result = _call_zhipu_llm(keyword, results)
+
     if llm_result:
         logger.info(
             f"[OnlineSearch] LLM 汇总成功: {llm_result['title']} -> {llm_result['best_url']}"

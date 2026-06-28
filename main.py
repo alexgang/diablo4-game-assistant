@@ -93,9 +93,16 @@ def main():
     use_cli = '--cli' in sys.argv
     use_ocr = '--no-ocr' not in sys.argv
     use_voice = '--no-voice' not in sys.argv
-    ocr_engine = None
-    stt_engine = 'google'
-    tts_engine = 'auto'
+    # 从 config 读取默认 OCR/TTS 引擎(命令行参数 --ocr=xxx 可覆盖)
+    try:
+        from config import OCR_CONFIG, VOICE_CONFIG
+        ocr_engine = OCR_CONFIG.get('engine')
+        stt_engine = VOICE_CONFIG.get('stt_engine', 'google')
+        tts_engine = VOICE_CONFIG.get('tts_engine', 'auto')
+    except ImportError:
+        ocr_engine = None
+        stt_engine = 'google'
+        tts_engine = 'auto'
 
     for arg in sys.argv:
         if arg.startswith('--ocr='):
@@ -154,8 +161,10 @@ def run_gui_mode(use_web=False, use_ocr=True, ocr_engine=None, stt_engine='googl
             stt_engine=stt_engine,
             tts_engine=tts_engine,
         )
-        window.show()
-        print("游戏助手已启动！ (含 Vision 场景识别 5秒/次自动 Tab 切换)")
+        # 启动时只显示小图标(不显示全尺寸主窗口),识别到场景后再自动展开
+        window.mini_icon.show()
+        window.mini_icon.raise_()
+        print("游戏助手已启动！(小图标模式,识别到场景自动展开,单击小图标可手动展开)")
         sys.exit(app.exec_())
 
     except ImportError as e:

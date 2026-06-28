@@ -32,6 +32,12 @@ from class_recommender import (
     get_class_display_name, get_class_color, get_class_icon,
     DEFAULT_BUILDS,
 )
+from boss_detector import (
+    BossHealthDetector, BossPhaseTracker, BossSkillDetector, BossNameDetector,
+    lookup_boss, recommend_affixes,
+    refresh_boss_db, get_boss_db_season, export_hardcoded_db_to_json,
+    get_boss_audio, get_boss_audio_segments, get_common_audio,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -608,6 +614,56 @@ class GuideWidget(QWidget):
         self.damage_group.show()
 
 
+class MiniIconWidget(QWidget):
+    """小图标悬浮窗 - 未识别场景/刚启动时显示,单击展开全尺寸界面
+
+    56x56 圆形图标,固定在屏幕左上角(距左20px,距顶部80px),不干扰游戏画面。
+    主窗口隐藏时显示此图标,主窗口显示时隐藏此图标。
+    """
+
+    clicked_to_expand = pyqtSignal()
+
+    ICON_SIZE = 56  # 图标尺寸(px)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
+
+        # 固定在屏幕左上角(距左20px,距顶部80px,留出窗口标题栏空间)
+        self.move(20, 80)
+
+        # 暗黑破坏神风格图标:恶魔之眼 👁️ (莉莉丝之眼意象)
+        self._label = QLabel(self)
+        self._label.setGeometry(0, 0, self.ICON_SIZE, self.ICON_SIZE)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setText("👁️")
+        self._label.setFont(_ff('Microsoft YaHei', 26, QFont.Bold))
+        self._label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(15, 5, 5, 230);
+                color: #ff3b1f;
+                border: 2px solid #ff3b1f;
+                border-radius: 28px;
+            }
+            QLabel:hover {
+                background-color: rgba(60, 10, 5, 240);
+                color: #ffcc00;
+                border: 2px solid #ffcc00;
+            }
+        """)
+        self._label.setToolTip("暗黑破坏神助手\n单击展开全尺寸界面")
+
+    def mousePressEvent(self, event):
+        """单击展开全尺寸界面"""
+        if event.button() == Qt.LeftButton:
+            self.clicked_to_expand.emit()
+        super().mousePressEvent(event)
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
 
@@ -630,6 +686,35 @@ class MainWindow(QMainWindow):
 
         self.damage_monitor = None
         self.is_damage_monitoring = False
+
+        # BOSS 战对战辅导
+        self.boss_health_detector = BossHealthDetector()
+        self.boss_phase_tracker = BossPhaseTracker()
+        self.boss_phase_tracker.on_phase_change = self._on_boss_phase_change
+        # boss_guide_2: BOSS 技能前摇检测器(亮色区域 → 技能特效预警)
+        self.boss_skill_detector = BossSkillDetector()
+        # BOSS 名字检测器(OCR 识别屏幕上方文字,作为血条检测的补充触发方式)
+        # OCR 引擎延迟注入: 等 detector.ocr 初始化完成后在 _detect_boss_health 中设置
+        self.boss_name_detector = BossNameDetector(ocr_engine=None)
+        self._boss_name_ocr_injected = False
+        self._current_boss_name = ''
+        self._boss_data_cache = None
+        # BOSS 名字检测在子线程执行(OCR 不能在主线程调用,会触发 0xC0000005 崩溃)
+        self._boss_name_thread = None
+        self._boss_name_thread_active = False
+        self._boss_name_pending_result = None
+        self._boss_name_last_frame = None
+        # 预生成音频播放状态(分阶段播放,避免重复)
+        self._boss_audio_played = set()
+        self._boss_audio_current_boss = ''
+        # 用户手工唤醒主界面后,阻止自动隐藏(直到用户点最小化按钮或场景识别成功)
+        self._user_pinned = False
+        # 独立 BOSS 血条检测定时器(1.5 秒间隔,脱离 5 秒的 Vision-Timer,降低触发延迟)
+        # 只做轻量级截图+血条颜色检测(几毫秒),不依赖 Vision 场景识别
+        self._boss_check_timer = QTimer(self)
+        self._boss_check_timer.timeout.connect(self._boss_quick_check)
+        self._boss_check_timer.start(1500)
+        self._boss_check_busy = False  # 防止重入
 
         self.current_scene_category = SceneCategory.UNKNOWN
         self.scene_vision_worker = None
@@ -655,6 +740,10 @@ class MainWindow(QMainWindow):
         self._update_voice_status_display()
         self._init_hotkeys()
         self._start_scene_vision_worker()
+
+        # 小图标悬浮窗: 未识别场景/刚启动时显示在右上角,单击展开全尺寸界面
+        self.mini_icon = MiniIconWidget(self)
+        self.mini_icon.clicked_to_expand.connect(self._show_full_window_from_mini)
 
     def init_ui(self):
         self.setWindowTitle("暗黑破坏神游戏助手")
@@ -714,6 +803,14 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.sdk_indicator)
 
         header_layout.addStretch()
+
+        # 最小化按钮:隐藏主窗口,返回小图标状态
+        self.minimize_btn = QPushButton("—")
+        self.minimize_btn.setFixedSize(int(24 * SCREEN_SCALE), int(24 * SCREEN_SCALE))
+        self.minimize_btn.setStyleSheet(f"color: #ffa500; background: transparent; border: none; font-size: {_fs(16)}px;")
+        self.minimize_btn.clicked.connect(self._minimize_to_mini_icon)
+        self.minimize_btn.setToolTip("最小化到小图标")
+        header_layout.addWidget(self.minimize_btn)
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(int(24 * SCREEN_SCALE), int(24 * SCREEN_SCALE))
@@ -941,6 +1038,7 @@ class MainWindow(QMainWindow):
         # 语音菜单
         menu_voice = menubar.addMenu("语音")
         menu_voice.addAction("语音输入", self.toggle_voice_listening)
+        menu_voice.addAction("唤醒词监听 (diablo)", self.toggle_wake_word_listening)
         menu_voice.addAction("朗读结果", self.speak_current_result)
         menu_voice.addAction("停止朗读", self.stop_speaking)
 
@@ -986,6 +1084,10 @@ class MainWindow(QMainWindow):
         menu_guide.addAction("🏠 攻略首页", lambda: self._load_quest_guide_url(GAMERSKY_D4_HOME))
         menu_guide.addAction("◀ 后退", self._guide_go_back)
         menu_guide.addAction("▶ 前进", self._guide_go_forward)
+        # boss_guide_7: BOSS 数据热重载(赛季改版同步)
+        menu_guide.addSeparator()
+        menu_guide.addAction("🔄 刷新BOSS数据", self._refresh_boss_data)
+        menu_guide.addAction("📦 导出BOSS数据模板", self._export_boss_data_template)
 
         # === Tabs（保留创建所有 tab 内容，隐藏 Tab 栏，最大化展示区域）===
         self.tabs = QTabWidget()
@@ -1529,6 +1631,8 @@ class MainWindow(QMainWindow):
             # 缓存场景检测帧,供后续职业识别复用(避免画面切换时重新截图导致 dxcam 崩溃)
             self._last_scene_frame = frame.copy()
 
+            # BOSS 血条检测已移到独立的 _boss_quick_check (1.5 秒间隔 QTimer),不在场景检测中调用
+
             # 2. 缩放到 1920 宽度（保持宽高比），实测 1920 宽度匹配得分 0.999+
             VISION_TARGET_WIDTH = 1920
             h, w = frame.shape[:2]
@@ -1616,6 +1720,483 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"Vision 主线程检测异常: {e}")
+
+    def _boss_quick_check(self):
+        """独立 BOSS 血条快速检测(1.5 秒间隔,脱离 5 秒 Vision-Timer)
+
+        只做轻量级截图 + 血条颜色检测,不做 Vision 场景识别/OCR。
+        显著降低 BOSS 战触发延迟:从 10-15 秒降到 3-4 秒。
+        """
+        if self._boss_check_busy:
+            return
+        if not self.detector or not self.detector.screen_capture:
+            return
+        self._boss_check_busy = True
+        try:
+            sc = self.detector.screen_capture
+            frame = None
+            # 用 dxcam 快速截图(主线程,安全)
+            if sc._dxcam is not None:
+                try:
+                    raw = sc._get_dxcam_frame()
+                    if raw is not None and raw.ndim == 3 and raw.shape[0] >= 100 and raw.shape[1] >= 100:
+                        frame = raw
+                except Exception:
+                    pass
+            # dxcam 失败时用 mss 兜底
+            if frame is None:
+                try:
+                    frame = sc.capture_full_screen(max_size=0)
+                except Exception:
+                    return
+            if frame is None or frame.size == 0:
+                return
+            # 调用完整 BOSS 检测逻辑(血条+名字+阶段+音频)
+            self._detect_boss_health(frame)
+        except Exception as e:
+            logger.debug(f"BOSS 快速检测异常: {e}")
+        finally:
+            self._boss_check_busy = False
+
+    def _detect_boss_health(self, frame):
+        """BOSS 战检测 - 在场景检测循环中调用
+
+        双重触发机制:
+        1. 血条检测: 检测屏幕顶部中央的红色血条(主触发)
+        2. 名字检测: OCR 识别血条上方的 BOSS 名字(补充触发,8秒节流)
+           - 血条颜色/位置特殊时,名字检测可作为兜底
+           - 名字匹配到 BOSS 库时,强制激活 BOSS 战状态
+        不依赖场景识别(BOSS 战可能在任何场景下发生)。
+
+        注意: OCR 必须在子线程执行,主线程调用 OpenVINO OCR 会触发 0xC0000005 崩溃
+        (SDK 服务占用 GPU 资源时冲突)
+        """
+        try:
+            # 延迟注入 OCR 引擎到名字检测器(等 detector.ocr 初始化完成)
+            # detector.ocr 就是 GameOCR 实例,直接用它
+            if not self._boss_name_ocr_injected and self.detector and hasattr(self.detector, 'ocr'):
+                ocr_obj = self.detector.ocr
+                if ocr_obj is not None and getattr(ocr_obj, 'available', False):
+                    self.boss_name_detector.set_ocr_engine(ocr_obj)
+                    self._boss_name_ocr_injected = True
+                    logger.info("[BOSS-Name] OCR 引擎已注入名字检测器")
+
+            result = self.boss_health_detector.detect(frame)
+            phase_result = self.boss_phase_tracker.update(
+                result['health_pct'], result['active']
+            )
+
+            # 名字检测: 血条未激活时不做(避免 UI 噪声误触发)
+            # 只在 just_activated 时做一次名字检测(识别具体 BOSS)
+            # 血条检测作为主触发,名字检测只用于识别 BOSS 身份
+
+            # 检查子线程是否返回了名字检测结果
+            if self._boss_name_pending_result is not None:
+                name_result = self._boss_name_pending_result
+                self._boss_name_pending_result = None  # 清除待处理结果
+                if name_result.get('detected') and name_result.get('boss_data'):
+                    boss_data = name_result['boss_data']
+                    self.boss_health_detector.force_activate(boss_data['name'])
+                    result = self.boss_health_detector.detect(frame)
+                    phase_result = self.boss_phase_tracker.update(
+                        result['health_pct'], result['active']
+                    )
+                    self._current_boss_name = boss_data['name']
+                    self._boss_data_cache = boss_data
+                    logger.info(f"[BOSS] 名字检测触发: {boss_data['name']} (弱点: {boss_data.get('weakness', [])})")
+                    # GUI 更新派发到主线程(此时已在主线程,但 _load_boss_guide 内部会启动在线搜索子线程)
+                    self._load_boss_guide(boss_data['name'])
+
+            if result['just_activated']:
+                # BOSS 战开始,重置名字检测器节流,确保能立即做 OCR
+                self.boss_name_detector.reset_throttle()
+                # BOSS 战开始,立即播放通用提示音(不等名字识别,降低延迟)
+                # 名字识别成功后会播放对应 BOSS 的 intro
+                self._boss_audio_played = set()
+                self._boss_audio_current_boss = ''
+                common_start = get_common_audio('boss_start')
+                if common_start:
+                    self._play_boss_audio_file(common_start)
+                    logger.info("[BOSS-Audio] 血条触发,立即播放通用提示音")
+                # BOSS 战开始,尝试 OCR 识别 BOSS 名字(血条触发时,走子线程)
+                self._start_boss_name_detection(frame)
+
+            if result['just_deactivated']:
+                # BOSS 战结束,播放装备建议音频(outro)
+                boss_name = self._boss_audio_current_boss or self._current_boss_name
+                if boss_name:
+                    self._play_boss_segment(boss_name, 'outro')
+                # 隐藏 BOSS 面板
+                self.guide_widget.boss_group.hide()
+                self._current_boss_name = ''
+                self._boss_data_cache = None
+                self._boss_audio_current_boss = ''
+                self._boss_audio_played = set()
+                self.boss_name_detector.reset()
+                return
+
+            if result['active']:
+                self._update_boss_ui(result, phase_result)
+                # BOSS 战进行中但尚未识别出名字时,定期重试 OCR(节流由检测器内部 8 秒控制)
+                # 解决首次 OCR 返回空文本/乱码时无法加载攻略的问题
+                if not self._current_boss_name:
+                    self._start_boss_name_detection(frame)
+                # boss_guide_2: BOSS 技能前摇识别(检测画面亮色区域 → 触发预警)
+                try:
+                    skill_result = self.boss_skill_detector.detect(frame)
+                    if skill_result.get('warning'):
+                        self._flash_boss_warning(skill_result['warning'])
+                except Exception as e:
+                    logger.debug(f"BOSS 技能检测异常: {e}")
+        except Exception as e:
+            logger.warning(f"BOSS 检测异常: {e}")
+
+    def _start_boss_name_detection(self, frame):
+        """在子线程启动 BOSS 名字 OCR 检测(避免主线程调用 OCR 导致 native 崩溃)
+
+        节流由 BossNameDetector 内部处理(8秒一次)。
+        同一时刻只允许一个检测线程运行。
+        """
+        if self._boss_name_thread_active:
+            return  # 上一次 OCR 还没完成,跳过
+        if frame is None or frame.size == 0:
+            return
+
+        # 复制帧(避免子线程访问时主线程修改)
+        self._boss_name_last_frame = frame.copy()
+        self._boss_name_thread_active = True
+
+        def _worker():
+            try:
+                name_result = self.boss_name_detector.detect(self._boss_name_last_frame)
+                self._boss_name_pending_result = name_result
+            except Exception as e:
+                logger.debug(f"BOSS 名字检测子线程异常: {e}")
+                self._boss_name_pending_result = None
+            finally:
+                self._boss_name_thread_active = False
+
+        import threading
+        t = threading.Thread(target=_worker, daemon=True, name='BossNameOCR')
+        t.start()
+        self._boss_name_thread = t
+
+    def _try_identify_boss_name(self, frame):
+        """OCR 识别 BOSS 名字(血条上方的文字)
+
+        注意: 直接调用 _start_boss_name_detection 走子线程,不在主线程调用 OCR
+        (主线程调用 OpenVINO OCR 会触发 0xC0000005 崩溃)
+        """
+        self._start_boss_name_detection(frame)
+
+    def _load_boss_guide(self, boss_name):
+        """BOSS 战攻略播报:播放预生成的分阶段音频
+
+        优先级:
+        1. 预生成音频文件(直接播放 mp3,无延迟,按阶段切分)
+        2. 实时 TTS 合成(回退方案,播放完整攻略)
+        3. 游民星空攻略库(加载网页)
+        4. 在线搜索(Bing + GLM 汇总)
+        """
+        logger.info(f"[BOSS-Guide] _load_boss_guide 被调用: {boss_name}")
+        try:
+            # 重置音频播放状态(新 BOSS 战)
+            self._boss_audio_played = set()
+            self._boss_audio_current_boss = boss_name
+
+            # 1. 优先播放预生成音频(intro 段)
+            audio_path = get_boss_audio(boss_name, 'intro')
+            if audio_path:
+                self._boss_audio_played.add('intro')
+                self._play_boss_audio_file(audio_path)
+                # 标记当前阶段的 phase 音频为已播放(避免阶段切换时重复播放)
+                # 因为 BOSS 战开始时可能已经处于阶段 1/2/3
+                current_phase = self.boss_phase_tracker.current_phase
+                if current_phase >= 1:
+                    self._boss_audio_played.add(f'phase{current_phase}')
+                    logger.info(f"[BOSS-Guide] 当前阶段={current_phase}, 已标记跳过 phase{current_phase}")
+                logger.info(f"自动播放 BOSS 攻略音频(intro): {boss_name}")
+                return
+
+            # 2. 回退:实时 TTS 合成完整攻略
+            boss_data = lookup_boss(boss_name)
+            if boss_data and boss_data.get('guide'):
+                speak_text = self._markdown_to_plain_text(boss_data['guide'])
+                logger.info(f"[BOSS-Guide] 预生成音频不存在,回退 TTS: {len(speak_text)} 字")
+                self._speak_boss_guide(boss_name, speak_text)
+                return
+
+            # 3. 游民星空攻略库(无本地攻略时,加载网页)
+            wv = self._ensure_guide_webview()
+            if wv is not None:
+                results = search_guide(boss_name)
+                if results:
+                    name, info = results[0]
+                    wv.load_url(info['url'])
+                    self.guide_top_bar.setText(f"📖 BOSS攻略: {boss_name}")
+                    self._switch_to_guide_tab()
+                    logger.info(f"自动加载 BOSS 攻略: {boss_name} → {name}")
+                    return
+
+                # 4. 在线搜索兜底
+                wv.search_online(f"{boss_name} BOSS 攻略")
+                self.guide_top_bar.setText(
+                    f"🔍 搜索中: {boss_name} BOSS攻略 (Bing + GLM 汇总)"
+                )
+                self.guide_top_bar.setStyleSheet(
+                    "color: #ffa500; background-color: rgba(50,35,15,200); "
+                    "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                    "border-bottom: 1px solid rgba(200,120,0,0.4);"
+                )
+                self._switch_to_guide_tab()
+                logger.info(f"BOSS 攻略库未匹配, 启动在线搜索: {boss_name}")
+        except Exception as e:
+            logger.debug(f"BOSS 攻略加载失败: {e}")
+
+    def _play_boss_audio_file(self, audio_path):
+        """播放预生成的 BOSS 攻略音频文件(mp3)
+
+        使用 pygame.mixer 异步播放,不阻塞主线程。
+        播放新音频前会停止当前播放(阶段切换时打断上一阶段音频)。
+        """
+        import os
+        if not os.path.isfile(audio_path):
+            logger.warning(f"[BOSS-Audio] 文件不存在: {audio_path}")
+            return
+        try:
+            import pygame
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            # 停止当前播放(阶段切换时打断上一阶段)
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            pygame.mixer.music.load(audio_path)
+            pygame.mixer.music.play()
+            logger.info(f"[BOSS-Audio] 播放: {os.path.basename(audio_path)}")
+        except Exception as e:
+            logger.warning(f"[BOSS-Audio] 播放失败: {e}")
+
+    def _play_boss_segment(self, boss_name, segment):
+        """播放 BOSS 攻略的指定分段(预生成音频优先,回退 TTS)
+
+        Args:
+            boss_name: BOSS 名字
+            segment: 'intro'/'phase1'/'phase2'/'phase3'/'phase4'/'outro'
+        """
+        # 避免重复播放同一段
+        if segment in self._boss_audio_played:
+            logger.debug(f"[BOSS-Audio] {segment} 已播放过,跳过")
+            return
+
+        # 1. 优先播放预生成音频
+        audio_path = get_boss_audio(boss_name, segment)
+        if audio_path:
+            self._boss_audio_played.add(segment)
+            self._play_boss_audio_file(audio_path)
+            return
+
+        # 2. 回退:实时 TTS(仅 intro 段回退,phase 段无预生成时跳过)
+        if segment == 'intro':
+            boss_data = lookup_boss(boss_name)
+            if boss_data and boss_data.get('guide'):
+                speak_text = self._markdown_to_plain_text(boss_data['guide'])
+                self._speak_boss_guide(boss_name, speak_text)
+                self._boss_audio_played.add(segment)
+                return
+
+        logger.debug(f"[BOSS-Audio] 无法播放 {segment}(无预生成音频,非 intro 段不回退 TTS)")
+
+    def _markdown_to_plain_text(self, md_text):
+        """Markdown 转纯文本(TTS 播报用)
+
+        做以下处理让 TTS 播报更自然:
+        - 去掉 Markdown 标记(标题/加粗/列表/emoji)
+        - 英文术语本地化(Phase→阶段, AOE→范围攻击, Uber→极品 等)
+        """
+        import re
+        text = md_text
+        # 去掉标题标记
+        text = re.sub(r'^#{1,4}\s+', '', text, flags=re.MULTILINE)
+        # 去掉加粗
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        # 去掉列表标记(支持带缩进的子列表项,如 "  - ")
+        text = re.sub(r'^\s*[-*]\s+', '', text, flags=re.MULTILINE)
+        # 去掉 emoji(避免 TTS 读出乱码)
+        text = re.sub(r'[\U0001f300-\U0001f9ff\U00002600-\U000027bf]', '', text)
+        # 英文术语本地化(让 TTS 读得更自然)
+        # 注意:\b 在中文字符边界不工作,所以用更宽松的匹配
+        text = re.sub(r'Phase\s*(\d)', r'第\1阶段', text, flags=re.IGNORECASE)
+        text = re.sub(r'(?<![A-Za-z])P(\d)(?![0-9])', r'第\1阶段', text)
+        # AOE 替换为"范围攻击",但避免"范围AOE"变成"范围范围攻击"
+        text = re.sub(r'范围AOE', '范围攻击', text, flags=re.IGNORECASE)
+        text = re.sub(r'AOE', '范围攻击', text, flags=re.IGNORECASE)
+        text = re.sub(r'Uber', '极品', text, flags=re.IGNORECASE)
+        # 去掉括号内的英文原名(避免 TTS 读英文),如 "齐尔大人 (Lord Zir)" → "齐尔大人"
+        text = re.sub(r'\s*\([A-Za-z\s,]+\)\s*', '', text)
+        # 合并多余空行
+        text = re.sub(r'\n{2,}', '\n', text)
+        return text.strip()
+
+    def _speak_boss_guide(self, boss_name, text):
+        """用 TTS 实时播报 BOSS 攻略(回退方案,预生成音频不可用时使用)"""
+        if not self.voice_assistant:
+            logger.warning("[TTS] voice_assistant 为 None,无法播报 BOSS 攻略")
+            return
+        if not hasattr(self.voice_assistant, 'voice_output') or self.voice_assistant.voice_output is None:
+            logger.warning("[TTS] voice_output 为 None,无法播报 BOSS 攻略")
+            return
+        if not self.voice_assistant.voice_output.available:
+            logger.warning("[TTS] voice_output.available=False,无法播报 BOSS 攻略")
+            return
+        try:
+            # 截断避免 TTS 文本过长
+            max_len = 800
+            if len(text) > max_len:
+                text = text[:max_len] + '。'
+            logger.info(f"[TTS] 调用 speak(): boss={boss_name}, {len(text)} 字, engine={getattr(self.voice_assistant.voice_output, 'engine_name', '?')}")
+            self.voice_assistant.voice_output.speak(text, blocking=False)
+            logger.info(f"[TTS] speak() 已返回(异步线程已启动): {boss_name}")
+        except Exception as e:
+            logger.warning(f"[TTS] 播报失败: {e}", exc_info=True)
+
+    def _refresh_boss_data(self):
+        """boss_guide_7: 热重载 BOSS 数据库(赛季改版同步)
+
+        赛季更新后用户编辑 boss_data.json, 点此菜单刷新内存数据, 无需重启程序。
+        首次使用时若 JSON 不存在, 自动导出内置数据作为可编辑模板。
+        """
+        try:
+            ok, season, count = refresh_boss_db()
+            if not ok:
+                # JSON 不存在,自动导出内置数据作为可编辑模板后重载
+                export_hardcoded_db_to_json()
+                ok, season, count = refresh_boss_db()
+                from boss_detector import BOSS_DATA_FILE
+                msg = (
+                    f"已自动生成 boss_data.json (内置数据)\n"
+                    f"赛季: {season}  |  BOSS 数: {count}\n"
+                    f"路径: {BOSS_DATA_FILE}\n"
+                    f"编辑 JSON 后再点此菜单即可加载新数据"
+                )
+                logger.info(f"[boss_guide_7] 自动导出并加载: {season}, {count} 个 BOSS")
+            else:
+                # 刷新当前 BOSS 数据缓存(若正在战斗)
+                if self._current_boss_name:
+                    self._boss_data_cache = lookup_boss(self._current_boss_name)
+                msg = f"BOSS 数据已刷新\n赛季: {season}  |  BOSS 数: {count}"
+                logger.info(f"[boss_guide_7] {msg}")
+            # 更新 BOSS 面板显示(若可见)
+            if self.guide_widget.boss_group.isVisible() and self._current_boss_name:
+                self._update_boss_ui(
+                    {'health_pct': 0.0, 'active': True}, {'phase': 0, 'phase_name': '未知'}
+                )
+            self.guide_top_bar.setText(msg.replace('\n', ' | '))
+            self.guide_top_bar.setStyleSheet(
+                "color: #4ade80; background-color: rgba(20,40,20,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(0,139,0,0.4);"
+            )
+        except Exception as e:
+            logger.error(f"刷新 BOSS 数据失败: {e}", exc_info=True)
+            self.guide_top_bar.setText(f"❌ 刷新失败: {e}")
+            self.guide_top_bar.setStyleSheet(
+                "color: #ff6b6b; background-color: rgba(50,15,15,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(200,0,0,0.4);"
+            )
+
+    def _export_boss_data_template(self):
+        """boss_guide_7: 将内置 BOSS 数据导出为 boss_data.json 模板
+
+        首次使用或赛季重置时调用, 生成可编辑的 JSON 文件。
+        会覆盖已存在的 boss_data.json(用于重置回内置数据)。
+        """
+        try:
+            from boss_detector import BOSS_DATA_FILE
+            import os
+            existed = os.path.isfile(BOSS_DATA_FILE)
+            if export_hardcoded_db_to_json():
+                tip = "已覆盖旧文件" if existed else "已生成新文件"
+                self.guide_top_bar.setText(
+                    f"{tip} → {BOSS_DATA_FILE} (编辑后点'刷新BOSS数据'加载)"
+                )
+                self.guide_top_bar.setStyleSheet(
+                    "color: #4ade80; background-color: rgba(20,40,20,200); "
+                    "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                    "border-bottom: 1px solid rgba(0,139,0,0.4);"
+                )
+                logger.info(f"[boss_guide_7] 已导出 BOSS 数据模板 ({tip})")
+        except Exception as e:
+            logger.error(f"导出 BOSS 数据模板失败: {e}", exc_info=True)
+            self.guide_top_bar.setText(f"❌ 导出失败: {e}")
+            self.guide_top_bar.setStyleSheet(
+                "color: #ff6b6b; background-color: rgba(50,15,15,200); "
+                "padding: 4px 8px; font-weight: bold; font-size: 12px; "
+                "border-bottom: 1px solid rgba(200,0,0,0.4);"
+            )
+
+    def _update_boss_ui(self, detect_result, phase_result):
+        """更新 BOSS 信息面板"""
+        hp = detect_result['health_pct']
+        phase = phase_result['phase']
+        phase_name = phase_result['phase_name']
+
+        lines = []
+        if self._current_boss_name:
+            lines.append(f"🐉 {self._current_boss_name}")
+        else:
+            lines.append("🐉 BOSS 战斗中")
+        lines.append(f"血量: {hp:.1f}%  |  阶段: {phase_name}")
+
+        if self._boss_data_cache:
+            rec = recommend_affixes(self._boss_data_cache)
+            if rec['weakness_elements']:
+                lines.append(f"弱点: {', '.join(rec['weakness_elements'])}")
+            if rec['resist_elements']:
+                lines.append(f"抗性: {', '.join(rec['resist_elements'])}")
+            if rec['tips']:
+                lines.append(f"💡 {rec['tips']}")
+
+        if phase_result.get('changed') and phase > 1:
+            lines.append(f"⚠️ 阶段切换! BOSS 进入 {phase_name},注意新技能!")
+
+        self.guide_widget.boss_content.setPlainText('\n'.join(lines))
+        self.guide_widget.boss_group.show()
+
+    def _on_boss_phase_change(self, new_phase, old_phase, health_pct):
+        """BOSS 阶段切换回调 - 播放对应阶段的攻略音频"""
+        logger.info(f"[BOSS] 阶段切换: {old_phase} -> {new_phase} (HP={health_pct:.1f}%)")
+        if new_phase > old_phase and new_phase >= 1:
+            # 播放对应阶段的攻略音频(预生成,分阶段播放)
+            boss_name = self._boss_audio_current_boss or self._current_boss_name
+            if boss_name:
+                segment = f'phase{new_phase}'
+                self._play_boss_segment(boss_name, segment)
+
+            # GUI 预警(阶段 2 起才显示,阶段 1 是 BOSS 战刚开始不需要预警)
+            if new_phase > 1:
+                self._flash_boss_warning(
+                    f"⚠️ BOSS 阶段切换! 进入阶段{new_phase}, 注意新技能!"
+                )
+
+    def _flash_boss_warning(self, message):
+        """BOSS 危险技能预警 - 红色横幅闪烁,3秒后自动恢复"""
+        self._boss_warn_style = self.guide_widget.boss_title.styleSheet()
+        self._boss_warn_text = self.guide_widget.boss_title.text()
+        self.guide_widget.boss_title.setText(message)
+        self.guide_widget.boss_title.setStyleSheet(
+            f"color: #ffffff; background-color: #cc0000; "
+            f"font-size: {_fs(14)}px; font-weight: bold; padding: 6px; "
+            f"border-radius: 4px;"
+        )
+        self.guide_widget.boss_group.show()
+        QTimer.singleShot(3000, self._restore_boss_warning)
+
+    def _restore_boss_warning(self):
+        """恢复 BOSS 标题原始样式"""
+        self.guide_widget.boss_title.setText(getattr(self, '_boss_warn_text', 'BOSS信息'))
+        self.guide_widget.boss_title.setStyleSheet(getattr(self, '_boss_warn_style', ''))
 
     def _handle_unknown_scene(self):
         """处理未识别场景:连续 3 次未识别才隐藏窗口
@@ -1829,15 +2410,26 @@ class MainWindow(QMainWindow):
         """切换到指定类别 Tab。装备/技能/巅峰 都映射到技能Tab(内嵌构筑网页),
         并驱动网页内部 tab 跟随游戏画面:
           装备->总览, 技能树->技能, 巅峰->巅峰
-        未识别场景时隐藏窗口,不影响玩家游戏;可通过 Ctrl+Alt+H 重新显示"""
-        # 未识别场景 -> 隐藏窗口(后台运行,不干扰玩家)
+        未识别场景时显示小图标悬浮窗(不干扰玩家游戏),单击小图标可展开全尺寸界面"""
+        # 未识别场景 -> 隐藏主窗口,显示小图标悬浮窗
+        # 但若用户手工唤醒了主界面(_user_pinned),则保持显示,不自动隐藏
         if category == SceneCategory.UNKNOWN:
-            if self.isVisible():
-                logger.info(f"🔄 场景未识别,隐藏窗口到后台 (从 {self.current_scene_category.value})")
+            if self.isVisible() and not self._user_pinned:
+                logger.info(f"🔄 场景未识别,隐藏窗口,显示小图标 (从 {self.current_scene_category.value})")
                 self.hide()
+                self.mini_icon.show()
+                self.mini_icon.raise_()
+            elif self._user_pinned:
+                logger.info(f"📌 场景未识别,但用户已锁定主界面,保持显示")
             return
 
-        # 其他场景 -> 确保窗口可见(从后台恢复)
+        # 其他场景 -> 隐藏小图标,确保主窗口可见
+        # 场景识别成功时解除用户锁定,恢复正常自动隐藏行为
+        if self._user_pinned:
+            self._user_pinned = False
+            logger.info(f"📌 场景已识别,解除用户锁定")
+        if self.mini_icon.isVisible():
+            self.mini_icon.hide()
         if not self.isVisible():
             self.show()
             self.activateWindow()
@@ -2521,37 +3113,94 @@ class MainWindow(QMainWindow):
             self.voice_worker.stop()
             self.voice_worker = None
 
+    def toggle_wake_word_listening(self):
+        """切换唤醒词持续监听模式(默认唤醒词 'diablo', voice_1+voice_5)"""
+        if not self.voice_assistant:
+            return
+        if not self.voice_assistant.voice_input.available:
+            self.voice_listen_btn.setText("🎤 麦克风不可用")
+            return
+        if self.voice_assistant.is_listening:
+            self.voice_assistant.stop_listening()
+            self.voice_listen_btn.setText("🎤 语音输入")
+            self.voice_listen_btn.setStyleSheet(
+                "color: #3498db; background-color: transparent; font-size: 12px;"
+            )
+            logger.info("唤醒词持续监听已停止")
+        else:
+            self.voice_assistant.start_continuous_listening(
+                wake_word='diablo',
+                callback=self._on_voice_result,
+                cooldown=10.0,
+            )
+            self.voice_listen_btn.setText("🎤 唤醒监听中 (diablo)...")
+            self.voice_listen_btn.setStyleSheet(
+                "color: #e74c3c; background-color: transparent; font-size: 12px;"
+            )
+            logger.info("唤醒词持续监听已启动 (唤醒词='diablo')")
+
     def _on_voice_result(self, result):
-        """处理语音识别结果"""
+        """处理语音识别结果 - 含意图路由(voice_6)"""
         self.guide_widget.update_voice_result(result)
 
-        # 语音查询任务攻略:识别文字包含攻略/任务相关关键词时,自动搜索并切换到攻略 Tab
+        intent = result.get('intent', '')
         text = result.get('text', '')
-        if text:
-            quest_keywords = [
-                '攻略', '任务', '支线', '主线', 'dlc', '剧情',
-                '破碎', '索格伦', '干燥', '凯吉斯坦', '哈维泽', '三神教',
-                '奶牛', '地狱狂潮', '声望', '低语', '秘语',
-                '新手', '入门', '快捷键', '属性', '增伤', '技能树',
-                '调谐石', '协调石', '战争计划', '暗金', '套装', '魔盒',
-                '创世', '编年史',
-            ]
-            text_lower = text.lower()
-            if any(kw in text_lower for kw in quest_keywords):
-                # 尝试搜索攻略
-                results = search_guide(text)
-                if results:
-                    name, info = results[0]
-                    wv = self._ensure_guide_webview()
-                    if wv is not None:
-                        wv.load_url(info['url'])
-                        self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
-                        self._switch_to_guide_tab()
-                        logger.info(f"语音触发攻略: '{text}' → {name}")
+        query = result.get('query', '')
+
+        # 意图路由:根据识别的意图执行对应功能
+        if intent == 'boss_info':
+            # 查BOSS:在 BOSS 弱点库中查找
+            boss_data = lookup_boss(query)
+            if boss_data:
+                rec = recommend_affixes(boss_data)
+                lines = [f"🐉 {boss_data['name']}", f"弱点: {', '.join(rec['weakness_elements'])}"]
+                if rec['resist_elements']:
+                    lines.append(f"抗性: {', '.join(rec['resist_elements'])}")
+                if rec['tips']:
+                    lines.append(f"💡 {rec['tips']}")
+                self.guide_widget.boss_content.setPlainText('\n'.join(lines))
+                self.guide_widget.boss_group.show()
+                self._current_boss_name = boss_data['name']
+                self._boss_data_cache = boss_data
+                logger.info(f"语音查BOSS: {query} → {boss_data['name']}")
+            else:
+                self._voice_search_quest_guide(text)
+
+        elif intent == 'build_search':
+            # 查构筑:根据职业名切换 d2core 构筑
+            class_name = result.get('class_name')
+            if class_name:
+                for cls in D4Class:
+                    if class_name in cls.value or class_name == cls.value:
+                        self._set_class_directly(cls, source='voice')
+                        break
+            logger.info(f"语音查构筑: {query} (职业={class_name})")
+
+        elif intent in ('quest_guide', 'equipment_search', 'location_guide', 'general_search'):
+            # 查任务/装备/位置/通用:搜索攻略
+            self._voice_search_quest_guide(text)
+
+        elif intent == 'skill_search':
+            # 查技能:搜索攻略(含技能关键词)
+            self._voice_search_quest_guide(text)
 
         if result.get('spoken'):
             self.voice_speak_btn.setText("🔊 播报中...")
             QTimer.singleShot(3000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
+
+    def _voice_search_quest_guide(self, text):
+        """语音触发攻略搜索"""
+        if not text:
+            return
+        results = search_guide(text)
+        if results:
+            name, info = results[0]
+            wv = self._ensure_guide_webview()
+            if wv is not None:
+                wv.load_url(info['url'])
+                self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
+                self._switch_to_guide_tab()
+                logger.info(f"语音触发攻略: '{text}' → {name}")
 
     def speak_current_result(self):
         """朗读当前推荐结果"""
@@ -2892,12 +3541,34 @@ class MainWindow(QMainWindow):
         self._show_overlay_tab(tab_index)
 
     def _on_hotkey_window(self):
-        """快捷键：隐藏/显示主窗口"""
+        """快捷键：隐藏/显示主窗口(联动小图标)"""
         if self.isVisible():
+            self._user_pinned = False  # 隐藏时解除锁定
             self.hide()
+            self.mini_icon.show()
+            self.mini_icon.raise_()
         else:
+            self._user_pinned = True  # 显示时锁定,避免被自动隐藏
+            self.mini_icon.hide()
             self.show()
             self.activateWindow()
+
+    def _show_full_window_from_mini(self):
+        """小图标单击时展开全尺寸主窗口"""
+        self._user_pinned = True  # 用户手工唤醒,阻止自动隐藏(直到用户点最小化按钮或场景识别成功)
+        self.mini_icon.hide()
+        self.show()
+        self.activateWindow()
+        self.raise_()
+        logger.info("📌 用户手工唤醒主界面,锁定不自动隐藏")
+
+    def _minimize_to_mini_icon(self):
+        """最小化到小图标状态(用户点击最小化按钮时调用)"""
+        self._user_pinned = False  # 解除锁定,恢复正常自动隐藏行为
+        self.hide()
+        self.mini_icon.show()
+        self.mini_icon.raise_()
+        logger.info("🔻 用户点击最小化按钮,返回小图标状态")
 
     def _on_hotkey_refresh(self):
         """快捷键：刷新分析"""
@@ -3051,12 +3722,25 @@ class MainWindow(QMainWindow):
             self.hotkey_manager.cleanup()
         if self.damage_monitor:
             self.damage_monitor.stop_monitoring()
+        # 关闭主窗口时同时关闭小图标悬浮窗
+        if hasattr(self, 'mini_icon'):
+            self.mini_icon.close()
         event.accept()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    # 从 config 读取 OCR 引擎配置(之前未传入,导致始终用默认列表第一项 openvino_python)
+    try:
+        from config import OCR_CONFIG, VOICE_CONFIG
+        _ocr_engine = OCR_CONFIG.get('engine')
+        _tts_engine = VOICE_CONFIG.get('tts_engine', 'auto')
+    except ImportError:
+        _ocr_engine = None
+        _tts_engine = 'auto'
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
+    window = MainWindow(ocr_engine=_ocr_engine, tts_engine=_tts_engine)
+    # 启动时只显示小图标(不显示全尺寸主窗口),识别到场景后再自动展开
+    window.mini_icon.show()
+    window.mini_icon.raise_()
     sys.exit(app.exec_())

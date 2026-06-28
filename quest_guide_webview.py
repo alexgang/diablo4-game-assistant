@@ -133,6 +133,89 @@ INJECT_CSS = """
 """
 
 
+def _markdown_to_html(md_text):
+    """简单的 Markdown → HTML 转换(支持标题/列表/加粗/段落),带暗色主题"""
+    import re as _re
+    import html as _html
+
+    lines = md_text.split('\n')
+    out = []
+    in_list = False
+
+    def esc(s):
+        return _html.escape(s, quote=False)
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if in_list:
+                out.append('</ul>')
+                in_list = False
+            out.append('')
+            continue
+
+        # 标题
+        m = _re.match(r'^(#{1,4})\s+(.+)$', stripped)
+        if m:
+            if in_list:
+                out.append('</ul>')
+                in_list = False
+            level = len(m.group(1))
+            out.append(f'<h{level}>{esc(m.group(2))}</h{level}>')
+            continue
+
+        # 无序列表
+        m = _re.match(r'^[-*]\s+(.+)$', stripped)
+        if m:
+            if not in_list:
+                out.append('<ul>')
+                in_list = True
+            content = esc(m.group(1))
+            # 加粗 **text**
+            content = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+            out.append(f'<li>{content}</li>')
+            continue
+
+        # 段落
+        if in_list:
+            out.append('</ul>')
+            in_list = False
+        content = esc(stripped)
+        content = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+        out.append(f'<p>{content}</p>')
+
+    if in_list:
+        out.append('</ul>')
+
+    body = '\n'.join(out)
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 20px 24px;
+    max-width: 720px;
+    margin: 0 auto;
+  }}
+  h2 {{ color: #ff6b35; border-bottom: 2px solid #ff6b35; padding-bottom: 6px; margin-top: 0; }}
+  h3 {{ color: #ffa500; margin-top: 18px; }}
+  ul {{ padding-left: 20px; }}
+  li {{ margin: 4px 0; }}
+  strong {{ color: #ffd700; }}
+  p {{ margin: 8px 0; }}
+  ::-webkit-scrollbar {{ width: 8px; }}
+  ::-webkit-scrollbar-track {{ background: rgba(0,0,0,0.3); }}
+  ::-webkit-scrollbar-thumb {{ background: rgba(120,40,20,0.7); border-radius: 4px; }}
+</style>
+</head><body>
+{body}
+</body></html>"""
+
+
 class QuestGuideWebView(QWidget):
     """任务图文攻略嵌入式网页组件
 
@@ -218,6 +301,27 @@ class QuestGuideWebView(QWidget):
         self._load_ok = False
         self._webview.load(QUrl(url))
         logger.info(f"[QuestGuide] 加载攻略: {url}")
+        return True
+
+    def load_markdown(self, markdown_text, title=''):
+        """直接显示本地 Markdown 攻略(不依赖网络)
+
+        Args:
+            markdown_text: Markdown 格式的攻略文本
+            title: 页面标题(显示在顶栏)
+
+        Returns:
+            bool: 是否成功显示
+        """
+        if not WEB_AVAILABLE or self._webview is None:
+            logger.warning("WebEngine 不可用,无法显示本地攻略")
+            return False
+
+        html = _markdown_to_html(markdown_text)
+        self._current_url = 'about:blank'
+        self._load_ok = False
+        self._webview.setHtml(html, QUrl('about:blank'))
+        logger.info(f"[QuestGuide] 显示本地 Markdown 攻略: {title} ({len(markdown_text)} 字)")
         return True
 
     def load_guide(self, name):
