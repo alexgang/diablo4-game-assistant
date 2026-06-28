@@ -2,12 +2,13 @@
 """
 将技能池图标添加到 SDK Vision 索引，用于职业识别
 
-每个职业的25个技能池图标作为一个 scene 添加到 Vision 索引：
-  scene_id = skill_icon_barbarian  (25个图标)
-  scene_id = skill_icon_rogue      (25个图标)
-  scene_id = skill_icon_sorcerer   (25个图标)
-  scene_id = skill_icon_druid      (25个图标)
-  scene_id = skill_icon_necromancer(25个图标)
+每个职业的技能池图标作为一个 scene 添加到 Vision 索引：
+  scene_id = skill_icon_barbarian
+  scene_id = skill_icon_rogue
+  scene_id = skill_icon_sorcerer
+  scene_id = skill_icon_druid
+  scene_id = skill_icon_necromancer
+  scene_id = skill_icon_spiritborn   (灵巫,赛季新职业)
 
 查询时，技能栏图标匹配到某职业的任何技能池图标 → 该职业
 
@@ -30,7 +31,9 @@ SDK_URL = SDK_CONFIG['server_url']
 INSTANCE_ID = SDK_CONFIG['instance_id']
 POOL_DIR = os.path.join(os.path.dirname(__file__), 'class_icon_templates', 'pool')
 
-CLASSES = ['barbarian', 'rogue', 'sorcerer', 'druid', 'necromancer']
+# 6 个职业全列(含灵巫 spiritborn);采集了哪个职业的图标,POOL_DIR 下就会有对应子目录,
+# 没有子目录的职业会在 add_skill_icons_to_index 里被自动跳过,所以全列不会报错。
+CLASSES = ['barbarian', 'rogue', 'sorcerer', 'druid', 'necromancer', 'spiritborn']
 
 
 def add_skill_icons_to_index(sdk):
