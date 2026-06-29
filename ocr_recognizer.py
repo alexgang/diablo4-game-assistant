@@ -2,10 +2,9 @@
 """
 OCR文字识别模块 - 从游戏画面中提取文字
 
-支持多引擎：
-1. PaddleOCR（推荐，中文识别效果最好）
-2. EasyOCR（备选，多语言支持好）
-3. Tesseract（传统方案，需要额外安装）
+支持引擎：
+1. EasyOCR（默认，中文识别效果最好，实测准确率最高）
+2. Tesseract（备选，需额外安装 Tesseract-OCR 软件）
 
 自动检测可用引擎，按优先级选择。
 """
@@ -20,33 +19,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_CPP_OCR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'PaddleOCR_OpenVINO_CPP-main')
-_CPP_OCR_EXE = os.path.join(_CPP_OCR_DIR, 'build', 'Release', 'reader.exe')
-_CPP_OCR_MODELS = os.path.join(_CPP_OCR_DIR, 'models')
-_CPP_OCR_LABEL = os.path.join(_CPP_OCR_DIR, 'data', 'ppocr_keys_v1.txt')
-
-
-def _get_default_device():
-    """从 config.py 读取默认 OpenVINO 推理设备"""
-    try:
-        from config import OCR_CONFIG
-        return OCR_CONFIG.get('device', 'AUTO')
-    except ImportError:
-        return 'AUTO'
-
 
 class GameOCR:
     """游戏画面OCR识别 - 多引擎支持"""
 
-    ENGINES = ['openvino_python', 'openvino_cpp', 'easyocr', 'paddleocr', 'tesseract']
+    ENGINES = ['easyocr', 'tesseract']
 
     def __init__(self, engine=None, lang='ch', device=None):
         self.lang = lang
         self.engine_name = None
         self.engine = None
         self.tesseract_cmd = None
-        # 优先用传入的 device,否则从 config 读取,最后回退 AUTO
-        self.device = device or _get_default_device()
         self._init_engine(engine)
 
     def _init_engine(self, preferred_engine=None):
@@ -60,10 +43,7 @@ class GameOCR:
             if cfg_engine and cfg_engine in self.ENGINES:
                 preferred_engine = cfg_engine
 
-        # NPU/GPU 等 Python OpenVINO 设备优先用 openvino_python(才能控制 device)
-        if not preferred_engine and self.device.upper() not in ('AUTO', 'CPU'):
-            engines_to_try = ['openvino_python', 'openvino_cpp', 'easyocr', 'paddleocr', 'tesseract']
-        elif preferred_engine:
+        if preferred_engine:
             # 首选指定引擎,失败时回退到其余引擎(保持可用性)
             engines_to_try = [preferred_engine] + [e for e in self.ENGINES if e != preferred_engine]
         else:
@@ -72,13 +52,7 @@ class GameOCR:
             if eng is None:
                 continue
             try:
-                if eng == 'openvino_python':
-                    self._init_openvino_python()
-                elif eng == 'openvino_cpp':
-                    self._init_openvino_cpp()
-                elif eng == 'paddleocr':
-                    self._init_paddleocr()
-                elif eng == 'easyocr':
+                if eng == 'easyocr':
                     self._init_easyocr()
                 elif eng == 'tesseract':
                     self._init_tesseract()
@@ -93,38 +67,6 @@ class GameOCR:
                 continue
 
         logger.warning("所有OCR引擎均不可用，将使用模拟模式")
-
-    def _init_openvino_python(self):
-        from openvino_inference import PaddleOCREngine
-        self.engine = PaddleOCREngine(device=self.device)
-        logger.info(f"OpenVINO OCR 设备: {self.device}")
-
-    def _init_openvino_cpp(self):
-        if not os.path.isfile(_CPP_OCR_EXE):
-            raise Exception(f"reader.exe not found: {_CPP_OCR_EXE}")
-        det_model = os.path.join(_CPP_OCR_MODELS, 'ch_PP-OCRv4_det_infer', 'inference.pdmodel')
-        cls_model = os.path.join(_CPP_OCR_MODELS, 'ch_ppocr_mobile_v2.0_cls_infer', 'inference.pdmodel')
-        rec_model = os.path.join(_CPP_OCR_MODELS, 'ch_PP-OCRv4_rec_infer', 'inference.pdmodel')
-        if not all(os.path.isfile(f) for f in [det_model, cls_model, rec_model]):
-            raise Exception("PaddleOCR model files not found in: " + _CPP_OCR_MODELS)
-        self.engine = {
-            'exe': _CPP_OCR_EXE,
-            'det_model': det_model,
-            'cls_model': cls_model,
-            'rec_model': rec_model,
-            'label': _CPP_OCR_LABEL,
-        }
-
-    def _init_paddleocr(self):
-        from paddleocr import PaddleOCR
-        self.engine = PaddleOCR(
-            use_angle_cls=True,
-            lang='ch',
-            show_log=False,
-            use_gpu=False,
-            det_db_thresh=0.3,
-            det_db_box_thresh=0.5,
-        )
 
     def _init_easyocr(self):
         import easyocr
@@ -250,20 +192,14 @@ class GameOCR:
             x, y, w, h = max(0, x), max(0, y), max(1, w), max(1, h)
             img = img[y:y + h, x:x + w]
 
-        # easyocr/openvino 自带预处理,喂原始彩色图效果最好;
-        # 外部二值化/增强预处理只对 paddleocr/tesseract 有益(实测 easyocr 经预处理后反而读不出)
-        if self.engine_name in ('openvino_python', 'openvino_cpp', 'easyocr'):
+        # easyocr 自带预处理,喂原始彩色图效果最好;
+        # 外部二值化/增强预处理只对 tesseract 有益(实测 easyocr 经预处理后反而读不出)
+        if self.engine_name == 'easyocr':
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'openvino_python':
-            return self.engine.extract_text(processed)
-        elif self.engine_name == 'openvino_cpp':
-            return self._ocr_openvino_cpp(processed)
-        elif self.engine_name == 'paddleocr':
-            return self._ocr_paddleocr(processed)
-        elif self.engine_name == 'easyocr':
+        if self.engine_name == 'easyocr':
             return self._ocr_easyocr(processed)
         elif self.engine_name == 'tesseract':
             return self._ocr_tesseract(processed)
@@ -286,163 +222,19 @@ class GameOCR:
             x, y, w, h = region
             img = img[y:y + h, x:x + w]
 
-        # easyocr/openvino 自带预处理,喂原始彩色图效果最好;
-        # 外部二值化/增强预处理只对 paddleocr/tesseract 有益(实测 easyocr 经预处理后反而读不出)
-        if self.engine_name in ('openvino_python', 'openvino_cpp', 'easyocr'):
+        # easyocr 自带预处理,喂原始彩色图效果最好;
+        # 外部二值化/增强预处理只对 tesseract 有益(实测 easyocr 经预处理后反而读不出)
+        if self.engine_name == 'easyocr':
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)
 
-        if self.engine_name == 'openvino_python':
-            return self.engine.ocr(processed)
-        elif self.engine_name == 'openvino_cpp':
-            return self._ocr_openvino_cpp_detail(processed)
-        elif self.engine_name == 'paddleocr':
-            return self._ocr_paddleocr_detail(processed)
-        elif self.engine_name == 'easyocr':
+        if self.engine_name == 'easyocr':
             return self._ocr_easyocr_detail(processed)
         elif self.engine_name == 'tesseract':
             return self._ocr_tesseract_detail(processed)
 
         return []
-
-    def _ocr_openvino_cpp(self, img):
-        try:
-            result = self._run_reader_exe(img)
-            if not result:
-                return ''
-            texts = [item['text'] for item in result if item.get('text')]
-            return ' '.join(texts)
-        except Exception as e:
-            logger.error(f"OpenVINO C++ OCR识别失败: {e}")
-            return ''
-
-    def _ocr_openvino_cpp_detail(self, img):
-        try:
-            result = self._run_reader_exe(img)
-            if not result:
-                return []
-            details = []
-            for item in result:
-                details.append({
-                    'text': item.get('text', ''),
-                    'confidence': item.get('score', 0.0),
-                    'bbox': item.get('bbox', []),
-                })
-            return details
-        except Exception as e:
-            logger.error(f"OpenVINO C++ OCR识别失败: {e}")
-            return []
-
-    def _run_reader_exe(self, img):
-        import cv2
-        tmp_path = os.path.join(tempfile.gettempdir(), f'_game_ocr_{os.getpid()}.png')
-        try:
-            cv2.imwrite(tmp_path, img)
-            cfg = self.engine
-            env = os.environ.copy()
-            ov_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\bin\intel64\Release'
-            tbb_bin = r'C:\Program Files (x86)\Intel\openvino\runtime\3rdparty\tbb\bin'
-            cv_bin = r'C:\opencv\build\x64\vc16\bin'
-            env['PATH'] = f'{ov_bin};{tbb_bin};{cv_bin};{env.get("PATH", "")}'
-            cmd = [
-                cfg['exe'],
-                '--type=ocr',
-                f'--input={tmp_path}',
-                f'--det_model_dir={cfg["det_model"]}',
-                f'--cls_model_dir={cfg["cls_model"]}',
-                f'--rec_model_dir={cfg["rec_model"]}',
-                f'--label_dir={cfg["label"]}',
-            ]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
-                env=env, cwd=_CPP_OCR_DIR,
-            )
-            return self._parse_reader_output(proc.stdout)
-        except subprocess.TimeoutExpired:
-            logger.error("reader.exe timeout (30s)")
-            return []
-        except Exception as e:
-            logger.error(f"reader.exe执行失败: {e}")
-            return []
-        finally:
-            if os.path.isfile(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-
-    @staticmethod
-    def _parse_reader_output(stdout):
-        results = []
-        for line in stdout.strip().split('\n'):
-            line = line.strip()
-            if not line or line.startswith('=') or line.startswith('Preprocessor'):
-                continue
-            if 'det boxes:' not in line or 'rec text:' not in line:
-                continue
-            parts = {}
-            det_idx = line.find('det boxes:')
-            rec_idx = line.find('rec text:')
-            score_idx = line.find('rec score:')
-            cls_idx = line.find('cls label:')
-            cls_score_idx = line.find('cls score:')
-            if det_idx >= 0 and rec_idx >= 0:
-                box_end = rec_idx
-                box_str = line[det_idx + len('det boxes:'):box_end].strip()
-                try:
-                    import ast
-                    parts['bbox'] = ast.literal_eval(box_str)
-                except Exception:
-                    parts['bbox'] = []
-            if rec_idx >= 0:
-                text_end = score_idx if score_idx >= 0 else cls_idx if cls_idx >= 0 else len(line)
-                parts['text'] = line[rec_idx + len('rec text:'):text_end].strip()
-            if score_idx >= 0:
-                score_end = cls_idx if cls_idx >= 0 else len(line)
-                try:
-                    parts['score'] = float(line[score_idx + len('rec score:'):score_end].strip())
-                except ValueError:
-                    parts['score'] = 0.0
-            if parts.get('text'):
-                results.append(parts)
-        return results
-
-    def _ocr_paddleocr(self, img):
-        try:
-            result = self.engine.ocr(img, cls=True)
-            if not result or not result[0]:
-                return ''
-            texts = []
-            for line in result[0]:
-                if line and len(line) >= 2:
-                    text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
-                    texts.append(text)
-            return ' '.join(texts)
-        except Exception as e:
-            logger.error(f"PaddleOCR识别失败: {e}")
-            return ''
-
-    def _ocr_paddleocr_detail(self, img):
-        try:
-            result = self.engine.ocr(img, cls=True)
-            if not result or not result[0]:
-                return []
-            details = []
-            for line in result[0]:
-                if line and len(line) >= 2:
-                    bbox = line[0] if isinstance(line[0], list) else []
-                    text = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
-                    conf = line[1][1] if isinstance(line[1], (list, tuple)) and len(line[1]) > 1 else 0.0
-                    details.append({
-                        'text': text,
-                        'confidence': float(conf),
-                        'bbox': bbox,
-                    })
-            return details
-        except Exception as e:
-            logger.error(f"PaddleOCR识别失败: {e}")
-            return []
 
     def _ocr_easyocr(self, img):
         try:

@@ -15,22 +15,17 @@ keyboard==0.13.5
 pystray==0.19.5          # 系统托盘图标
 dxcam==0.0.5             # Windows 高性能屏幕捕获（优先于 mss）
 
-# ── OCR 文字识别（任选其一，openvino_cpp 为默认引擎）──────────
-openvino==2024.0.0       # config.py 默认 OCR/推理引擎
+# ── OCR 文字识别（config.py 默认 easyocr，中文识别准确率最高）──
+easyocr==1.7.1           # 默认 OCR 引擎
 # pytesseract==0.3.10    # 备选，另需安装 Tesseract-OCR 软件
-# paddleocr              # 备选
-# paddlepaddle           # 备选（配合 paddleocr）
-# easyocr                # 备选
 
 # ── 语音：识别 (STT) + 播报 (TTS) ────────────────────────────
 SpeechRecognition==3.10.1
-pyttsx3==2.90
-edge-tts==6.1.12
-pygame==2.5.2
+pyttsx3==2.90            # 离线 TTS（回退）
+edge-tts==6.1.12         # 默认 TTS（微软在线，音质好，需联网）
+pygame==2.5.2            # 音频播放
 pyaudiowpatch==0.2.12.7  # 音频输入/系统回录（优先）
 sounddevice==0.4.6       # 音频输入回退方案
-jieba==0.42.1            # 中文分词（TTS/意图处理）
-pypinyin==0.51.0         # 中文转拼音（TTS）
 # openai-whisper         # 可选：高精度离线语音识别（需较大磁盘/GPU）
 
 # ── 网站数据爬虫 ─────────────────────────────────────────────

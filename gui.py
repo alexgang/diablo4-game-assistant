@@ -1768,8 +1768,8 @@ class MainWindow(QMainWindow):
            - 名字匹配到 BOSS 库时,强制激活 BOSS 战状态
         不依赖场景识别(BOSS 战可能在任何场景下发生)。
 
-        注意: OCR 必须在子线程执行,主线程调用 OpenVINO OCR 会触发 0xC0000005 崩溃
-        (SDK 服务占用 GPU 资源时冲突)
+        注意: OCR 必须在子线程执行,主线程调用 OCR 可能触发 0xC0000005 崩溃
+        (与 SDK 服务/GPU 资源冲突)
         """
         try:
             # 延迟注入 OCR 引擎到名字检测器(等 detector.ocr 初始化完成)
@@ -1885,7 +1885,7 @@ class MainWindow(QMainWindow):
         """OCR 识别 BOSS 名字(血条上方的文字)
 
         注意: 直接调用 _start_boss_name_detection 走子线程,不在主线程调用 OCR
-        (主线程调用 OpenVINO OCR 会触发 0xC0000005 崩溃)
+        (主线程调用 OCR 可能触发 0xC0000005 崩溃)
         """
         self._start_boss_name_detection(frame)
 
@@ -3730,7 +3730,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
-    # 从 config 读取 OCR 引擎配置(之前未传入,导致始终用默认列表第一项 openvino_python)
+    # 从 config 读取 OCR 引擎配置(easyocr)
     try:
         from config import OCR_CONFIG, VOICE_CONFIG
         _ocr_engine = OCR_CONFIG.get('engine')

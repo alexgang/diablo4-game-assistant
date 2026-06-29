@@ -12,7 +12,7 @@
 用法：
   python main.py                  # GUI模式
   python main.py --web            # 启用网站数据
-  python main.py --ocr=paddleocr  # 指定OCR引擎
+  python main.py --ocr=easyocr    # 指定OCR引擎(easyocr/tesseract)
   python main.py --no-ocr         # 禁用OCR（模拟模式）
   python main.py --no-voice       # 禁用语音
   python main.py --stt=google     # 指定语音识别引擎

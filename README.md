@@ -15,16 +15,15 @@
 
 ### 🔍 屏幕捕获 + OCR识别
 - 实时捕获游戏窗口画面
-- **OpenVINO OCR**（基于 PaddleOCR 模型）为主引擎，支持 CPU/GPU/NPU 设备配置
-- 多引擎回退：OpenVINO → EasyOCR → Tesseract
+- **EasyOCR** 为默认引擎（中文识别准确率最高，喂原始彩色图即可），Tesseract 为备选
 - 自动识别游戏状态：任务、BOSS、位置、职业
-- 图像预处理：暗色背景增强、高对比度模式
+- 图像预处理：暗色背景增强、高对比度模式（仅 Tesseract 启用；EasyOCR 用原图效果最好）
 - **QuestOCR**：从画面右侧任务面板裁剪文字（原始分辨率，避免缩放模糊），自动匹配攻略库
 
 ### 🎤 语音交互
 - **语音输入**：SDK ASR优先（Paraformer 中文优化，首次调用自动启用） / Google / Sphinx / Whisper 多引擎
 - **意图识别**：自动解析7种玩家意图（查BOSS/查装备/查技能/查构筑/查任务/查位置/通用搜索）
-- **语音播报**：Edge TTS（最优，低延迟） / MeloTTS / pyttsx3 语音回复搜索结果
+- **语音播报**：Edge TTS（默认，微软在线，音质好） / pyttsx3（离线回退）
 - **持续监听**：支持唤醒词激活，后台持续监听
 
 ### 📊 内容索引 + 智能推荐
@@ -40,12 +39,12 @@
 
 ### 🔮 d2core 构筑自动加载（核心特性）
 - **嵌入式网页展示**：在主窗口内嵌 QWebEngineView，直接加载 [d2core.com](https://www.d2core.com) 的在线构筑页面，无需切换浏览器
-- **自动职业识别**：四级策略自动识别当前角色职业
-  - 策略1：右上角职业图标 Vision/模板匹配（装备/巅峰界面）
-  - 策略1.5：**技能栏图标识别**（所有界面可见，战斗/城镇/地图通用，程序自动采集模板）
-  - 策略2：右侧面板主属性 OCR（力量/智力/敏捷/意志 数值最大者）
-  - 策略3：OCR 关键词识别（中英文职业名 + 角色名映射）
-- **自动加载构筑**：识别到职业后自动加载 d2core 上对应的 S13 季节构筑
+- **自动职业识别**：多级策略自动识别当前角色职业（以 EasyOCR 文字识别为主力，最可靠）
+  - 策略0：角色名 OCR 映射（装备/角色界面读取角色名 → 职业，容忍单字误识）
+  - 策略1：右侧面板主属性 OCR（力量/智力/敏捷/意志，取数值最大者 → 对应职业）
+  - 策略2：OCR 关键词识别（中英文职业名 / 技能名）
+  - 策略3：技能栏/右上角图标匹配（实验性，受游戏图标渲染差异影响，可靠性有限）
+- **自动加载构筑**：识别到职业后自动加载 d2core 上对应的季节构筑
 - **场景驱动网页内 Tab 切换**：5 秒一次 Vision 场景识别，自动驱动网页内部 tab 跟随游戏画面
   - 游戏在装备界面 → 网页切到「总览」
   - 游戏在技能树界面 → 网页切到「技能」
@@ -100,9 +99,8 @@
 ├── game_data.py            # 本地游戏数据库（D4数据）
 ├── content_indexer.py      # 内容索引引擎
 ├── screen_capture.py       # 屏幕捕获模块
-├── ocr_recognizer.py       # OCR文字识别模块（多引擎封装）
-├── openvino_inference.py   # OpenVINO推理引擎（支持CPU/GPU/NPU设备配置）
-├── voice_assistant.py      # 语音交互模块（SDK ASR优先 + Edge TTS）
+├── ocr_recognizer.py       # OCR文字识别模块（EasyOCR / Tesseract）
+├── voice_assistant.py      # 语音交互模块（SDK ASR优先 + Edge TTS / pyttsx3）
 ├── damage_analyzer.py      # 伤害分析模块（SDK BAR集成）
 ├── hotkey_manager.py       # 全局快捷键管理
 ├── data_spider.py          # 网站数据爬虫
@@ -158,12 +156,10 @@ pip install -r requirements.txt
 # 最小依赖（仅GUI + 本地数据库 + 搜索）
 pip install PyQt5 mss opencv-python numpy Pillow requests beautifulsoup4
 
-# 加上OCR功能
-pip install paddleocr paddlepaddle
-# 或者
+# 加上OCR功能（默认 EasyOCR，中文识别准确率最高）
 pip install easyocr
-# 或者
-pip install pytesseract    # 还需安装 Tesseract-OCR 软件
+# 或者备选 Tesseract（还需安装 Tesseract-OCR 软件）
+pip install pytesseract
 
 # 加上语音功能
 pip install SpeechRecognition pyttsx3 edge-tts pygame
@@ -212,7 +208,7 @@ python main.py --no-ocr
 | `--voice` | 语音交互模式（配合 --cli） | `python main.py --cli --voice` |
 | `--no-ocr` | 禁用OCR | `python main.py --no-ocr` |
 | `--no-voice` | 禁用语音 | `python main.py --no-voice` |
-| `--ocr=ENGINE` | 指定OCR引擎 | `python main.py --ocr=paddleocr` |
+| `--ocr=ENGINE` | 指定OCR引擎（easyocr/tesseract） | `python main.py --ocr=easyocr` |
 | `--stt=ENGINE` | 指定语音识别引擎 | `python main.py --stt=google` |
 | `--tts=ENGINE` | 指定语音播报引擎 | `python main.py --tts=edge_tts` |
 | `--sdk-url=URL` | 指定SDK服务器地址 | `python main.py --sdk-url=http://localhost:9190` |
@@ -267,7 +263,7 @@ SDK_CONFIG = {
     },
     'asr': {
         'enabled': True,
-        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 圣骑士 游侠',
+        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 灵巫 游侠',
     },
     'bar': {
         'enabled': True,
@@ -291,18 +287,16 @@ LLM_CONFIG = {
 }
 ```
 
-### OCR 设备配置
+### OCR 引擎配置
 
-`config.py` 中的 `OCR_CONFIG['device']` 控制 OpenVINO 推理设备：
+`config.py` 中的 `OCR_CONFIG['engine']` 控制 OCR 引擎：
 
 | 值 | 说明 |
 |----|------|
-| `'AUTO'` | 自动选择最优设备（推荐，默认值） |
-| `'CPU'` | CPU 推理（小模型最稳定，11ms） |
-| `'GPU'` | GPU 推理（首次编译慢约 8s，小模型加速有限） |
-| `'NPU'` | NPU 推理（不兼容 PaddleOCR，仅适合大模型） |
+| `'easyocr'` | 默认，中文识别准确率最高，喂原始彩色图即可 |
+| `'tesseract'` | 备选，需额外安装 Tesseract-OCR 软件 |
 
-> **实测结论**：PaddleOCR 的 det/rec/cls 模型因动态 shape 和算子限制不兼容 NPU；CPU 对小模型最快最稳定，因此默认 `'AUTO'`。
+> **实测结论**：EasyOCR 对游戏暗色界面的中文文字识别效果最好，是职业识别（角色名/主属性）和 QuestOCR 的基础。
 
 ---
 
@@ -416,9 +410,9 @@ A: 双击 `启动助手.bat` 时会自动启动 SDK 服务器。若仍不可用�
 3. 未启动SDK时程序自动使用本地模式，功能不受影响
 
 ### Q: 启动后OCR状态显示"不可用"？
-A: 需要安装OCR引擎，推荐安装 PaddleOCR：
+A: 需要安装 OCR 引擎，推荐 EasyOCR：
 ```bash
-pip install paddleocr paddlepaddle
+pip install easyocr
 ```
 
 ### Q: 语音输入按钮显示"麦克风不可用"？
@@ -429,8 +423,8 @@ A:
 
 ### Q: OCR识别结果不准确？
 A:
-1. 启用SDK Vision服务可获得更精准的场景识别
-2. 尝试切换OCR引擎：`--ocr=paddleocr`
+1. 确认使用默认的 EasyOCR 引擎（中文识别最准）
+2. 职业/任务识别建议在「角色界面」或「装备界面」触发，文字更清晰
 3. 调整 `config.py` 中的 `SCREEN_REGION` 匹配你的分辨率
 
 ## 🙏 致谢与参考
@@ -441,7 +435,7 @@ A:
   - 仓库地址：https://github.com/GameTechDev/IntelAIGamingAssistantLibrary
 - [d2core.com](https://www.d2core.com) — 暗黑破坏神 IV 构筑（Build）数据来源
 - [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) — GUI 框架与 QtWebEngine
-- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) / [OpenVINO](https://github.com/openvinotoolkit/openvino) — OCR 文字识别
+- [EasyOCR](https://github.com/JaidedAI/EasyOCR) — OCR 文字识别
 - [Edge-TTS](https://github.com/rany2/edge-tts) — 语音播报
 
 > 如果 Intel Gaming Assistant SDK 帮助到了你，欢迎前往 [IntelAIGamingAssistantLibrary](https://github.com/GameTechDev/IntelAIGamingAssistantLibrary) 给项目点个 ⭐。
@@ -477,7 +471,7 @@ A:
 |--------|------|------|------|
 | 🔴 高 | 语音唤醒词激活 | 默认唤醒词 `diablo`，持续后台监听，检测到唤醒词后激活语音交互模式 | ✅ |
 | 🔴 高 | 7 种玩家意图识别 | 查BOSS / 查装备 / 查技能 / 查构筑 / 查任务 / 查位置 / 通用搜索，关键词 + LLM 分类玩家语音指令 | ✅ |
-| 🔴 高 | MeloTTS 多语种语音播报 | 支持中英文混读，无云端依赖，本地推理生成语音回复 | ✅ |
+| 🔴 高 | Edge TTS 语音播报 | 微软在线 TTS，中文音质好、低延迟，pyttsx3 离线回退 | ✅ |
 | 🟡 中 | 语音交互流程编排 | 唤醒词激活 → 录音 → ASR 转文字 → 意图识别 → 执行对应查询 → TTS 播报结果 | ✅ |
 | 🟡 中 | 唤醒词误触抑制 | 环境噪声过滤、置信度阈值、冷却时间（避免频繁误激活） | ✅ |
 | 🟡 中 | 意图-功能路由 | 查BOSS→BOSS攻略、查装备→装备库、查技能→技能树、查构筑→d2core、查任务→QuestOCR、查位置→地图、通用→Bing搜索 | ✅ |

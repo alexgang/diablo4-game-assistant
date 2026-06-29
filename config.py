@@ -25,20 +25,13 @@ CONFIDENCE_THRESHOLD = 0.8
 SCAN_INTERVAL = 2.0
 
 OCR_CONFIG = {
-    # 实测对比(齐尔领主 BOSS 名字截图):
-    #   easyocr        -> '齐尔领主的折磨回响 +3' (完美, 原图即可, 0.23s)
-    #   openvino_python -> '齐尔领王的折磨回响+3'  (需放大2倍, "尔"误识为"王", 5.72s)
-    #   openvino_cpp    -> '' (完全失败)
+    # OCR 引擎: 'easyocr'(默认,中文识别准确率最高) / 'tesseract'(备选,需额外安装软件)
+    # 实测 easyocr 对游戏暗色界面文字识别效果最好,喂原始彩色图即可。
     'engine': 'easyocr',
     'lang': 'ch',
     'preprocess': 'auto',
     'cache_ttl': 2.0,
     'min_text_length': 2,
-    # OpenVINO 推理设备: 'AUTO'/'CPU'/'GPU'/'NPU'
-    # 实测 PaddleOCR 模型不兼容 NPU(AvgPool/Interpolate 算子限制),
-    # GPU 首次编译慢(8s)且小模型加速有限,CPU 最稳定。
-    # AUTO 让 OpenVINO 自动选最优设备。
-    'device': 'AUTO',
 }
 
 D4_REGIONS = {
@@ -53,8 +46,7 @@ D4_REGIONS = {
 
 VOICE_CONFIG = {
     'stt_engine': 'google',
-    # TTS 引擎: edge_tts(微软在线,音质好,需联网) / melotts(本地 OpenVINO) / pyttsx3(系统)
-    # 实测 melotts C++ 子进程在 BOSS 战播报时静默失败,改用 edge_tts
+    # TTS 引擎: edge_tts(微软在线,音质好,需联网) / pyttsx3(系统离线,回退)
     'tts_engine': 'edge_tts',
     'language': 'zh-CN',
     'tts_voice': 'zh-CN-XiaoxiaoNeural',

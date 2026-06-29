@@ -353,7 +353,7 @@ class BossNameDetector:
 
             # OCR 识别策略: 先用原图识别(easyocr 原图即可识别),返回空时降级放大2倍重试
             # (实测: easyocr 在 60px 高的原图上即可完美识别"齐尔领主的折磨回响";
-            #  openvino_python 需放大2倍才能识别; 2560x1600 分辨率下放大2倍反而乱码)
+            #  2560x1600 高分辨率下放大2倍反而可能乱码,故优先原图)
             text = ''
             try:
                 text = self._ocr.extract_text(crop, preprocess='none')
@@ -362,7 +362,7 @@ class BossNameDetector:
 
             text = text.strip() if text else ''
 
-            # 原图识别为空时,降级放大2倍重试(兼容小分辨率或 openvino_python)
+            # 原图识别为空时,降级放大2倍重试(兼容小分辨率)
             if len(text) < self.MIN_TEXT_LENGTH:
                 crop_scaled = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
                 try:
