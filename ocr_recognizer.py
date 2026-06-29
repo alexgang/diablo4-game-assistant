@@ -50,11 +50,24 @@ class GameOCR:
         self._init_engine(engine)
 
     def _init_engine(self, preferred_engine=None):
+        # 未显式指定引擎时,优先读 config.OCR_CONFIG['engine'](用户在 config 里的选择应生效)
+        if not preferred_engine:
+            try:
+                from config import OCR_CONFIG
+                cfg_engine = OCR_CONFIG.get('engine')
+            except Exception:
+                cfg_engine = None
+            if cfg_engine and cfg_engine in self.ENGINES:
+                preferred_engine = cfg_engine
+
         # NPU/GPU 等 Python OpenVINO 设备优先用 openvino_python(才能控制 device)
         if not preferred_engine and self.device.upper() not in ('AUTO', 'CPU'):
             engines_to_try = ['openvino_python', 'openvino_cpp', 'easyocr', 'paddleocr', 'tesseract']
+        elif preferred_engine:
+            # 首选指定引擎,失败时回退到其余引擎(保持可用性)
+            engines_to_try = [preferred_engine] + [e for e in self.ENGINES if e != preferred_engine]
         else:
-            engines_to_try = [preferred_engine] if preferred_engine else self.ENGINES
+            engines_to_try = self.ENGINES
         for eng in engines_to_try:
             if eng is None:
                 continue
@@ -237,9 +250,9 @@ class GameOCR:
             x, y, w, h = max(0, x), max(0, y), max(1, w), max(1, h)
             img = img[y:y + h, x:x + w]
 
-        if self.engine_name == 'openvino_python':
-            processed = img
-        elif self.engine_name == 'openvino_cpp':
+        # easyocr/openvino 自带预处理,喂原始彩色图效果最好;
+        # 外部二值化/增强预处理只对 paddleocr/tesseract 有益(实测 easyocr 经预处理后反而读不出)
+        if self.engine_name in ('openvino_python', 'openvino_cpp', 'easyocr'):
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)
@@ -273,9 +286,9 @@ class GameOCR:
             x, y, w, h = region
             img = img[y:y + h, x:x + w]
 
-        if self.engine_name == 'openvino_python':
-            processed = img
-        elif self.engine_name == 'openvino_cpp':
+        # easyocr/openvino 自带预处理,喂原始彩色图效果最好;
+        # 外部二值化/增强预处理只对 paddleocr/tesseract 有益(实测 easyocr 经预处理后反而读不出)
+        if self.engine_name in ('openvino_python', 'openvino_cpp', 'easyocr'):
             processed = img
         else:
             processed = self.preprocess_image(img, mode=preprocess)

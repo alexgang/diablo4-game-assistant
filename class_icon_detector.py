@@ -232,24 +232,45 @@ def detect_class_from_attributes(text: str) -> Optional[D4Class]:
     import re
     text_lower = text.lower()
 
-    # 策略1：尝试提取"属性名 + 数字"形式，选数值最大的属性
+    # 属性名容错:OCR 常把"意志"识别为"意力/意忐"等,"敏捷"为"敏挂"等。
+    # 用每个属性的首字 + 常见误识变体匹配。
+    ATTR_VARIANTS = [
+        (D4Class.BARBARIAN, ['力量', 'strength'], '力'),
+        (D4Class.ROGUE, ['敏捷', 'dexterity'], '敏'),
+        (D4Class.SORCERER, ['智力', 'intelligence'], '智'),
+        (D4Class.DRUID, ['意志', '意力', '意忐', 'willpower'], '意'),
+    ]
+
+    def _attr_to_class(name):
+        nl = name.lower()
+        for cls, variants, _first in ATTR_VARIANTS:
+            for v in variants:
+                if v in name or v in nl:
+                    return cls
+        return None
+
+    # 策略1：提取"属性名 + 数字"，选数值最大的属性。
+    # 数字支持千分位逗号(如 1,406)——这是之前漏识的关键:1,406 被截成 1 导致误判。
     attr_pattern = re.compile(
-        r'(力量|敏捷|智力|意志|strength|dexterity|intelligence|willpower)'
-        r'\s*[:：]?\s*(\d{1,6})',
+        r'(力量|敏捷|智力|意志|意力|意忐|strength|dexterity|intelligence|willpower)'
+        r'\s*[:：]?\s*([\d,]{1,9})',
         re.IGNORECASE
     )
     matches = attr_pattern.findall(text)
     if matches:
         attr_values = {}
         for attr, val in matches:
-            attr_lower = attr.lower()
-            cls = PRIMARY_ATTRIBUTE_TO_CLASS.get(attr) or PRIMARY_ATTRIBUTE_TO_CLASS.get(attr_lower)
-            if cls and cls not in attr_values:
-                attr_values[cls] = int(val)
+            num = val.replace(',', '').strip()
+            if not num.isdigit():
+                continue
+            cls = _attr_to_class(attr)
+            # 同一职业出现多次取最大值(防止 OCR 把同属性读两次取了小的)
+            if cls and (cls not in attr_values or int(num) > attr_values[cls]):
+                attr_values[cls] = int(num)
         if attr_values:
             top_cls = max(attr_values.items(), key=lambda x: x[1])[0]
             logger.info(
-                f"主属性数值匹配: {attr_values} → {top_cls.value} (最高)"
+                f"主属性数值匹配: {dict((c.value, v) for c, v in attr_values.items())} → {top_cls.value} (最高)"
             )
             return top_cls
 

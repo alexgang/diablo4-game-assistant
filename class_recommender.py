@@ -128,18 +128,41 @@ AMBIGUOUS_CHARACTER_NAMES: Dict[str, List[D4Class]] = {
 }
 
 
+def _name_fuzzy_match(name: str, text: str) -> bool:
+    """角色名模糊匹配:容忍 OCR 单字误识(如"芝"→"芰")。
+    策略:精确包含→命中;否则取核心部分(去公共前缀"芝麻"),核心在 text 中
+    则命中;再否则允许核心字符按序出现时漏1个(容忍单字误识)。"""
+    if not name or not text:
+        return False
+    if name in text:
+        return True
+    core = name[2:] if name.startswith('芝麻') and len(name) > 3 else name
+    if len(core) < 2:
+        return False
+    if core in text:
+        return True
+    pos, hit = -1, 0
+    for ch in core:
+        idx = text.find(ch, pos + 1)
+        if idx > pos:
+            hit += 1
+            pos = idx
+    return hit >= len(core) - 1
+
+
 def detect_class_from_character_name(text: str):
     """从 OCR 文本中匹配已知角色名 → 职业。
     返回 (D4Class, ambiguous: bool)。未命中返回 (None, False)。
-    ambiguous=True 表示命中重名角色,调用方需用图标/属性进一步消歧。"""
+    ambiguous=True 表示命中重名角色,调用方需用图标/属性进一步消歧。
+    匹配容忍 OCR 单字误识(如"芝麻苏玛雅"被识别为"芰麻苏玛雅")。"""
     if not text:
         return None, False
     # 先查重名(更具体)
     for name, classes in AMBIGUOUS_CHARACTER_NAMES.items():
-        if name in text:
+        if _name_fuzzy_match(name, text):
             return classes[0], True   # 返回首选职业 + 标记需消歧
     for name, cls in CHARACTER_NAME_TO_CLASS.items():
-        if name in text:
+        if _name_fuzzy_match(name, text):
             return cls, False
     return None, False
 
