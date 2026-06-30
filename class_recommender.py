@@ -150,6 +150,19 @@ def _name_fuzzy_match(name: str, text: str) -> bool:
     return hit >= len(core) - 1
 
 
+def matched_character_name(text: str):
+    """返回 text 中匹配到的已知角色名(用于判断是否'新角色名')。未命中返回 ''。"""
+    if not text:
+        return ''
+    for name in AMBIGUOUS_CHARACTER_NAMES:
+        if _name_fuzzy_match(name, text):
+            return name
+    for name in CHARACTER_NAME_TO_CLASS:
+        if _name_fuzzy_match(name, text):
+            return name
+    return ''
+
+
 def detect_class_from_character_name(text: str):
     """从 OCR 文本中匹配已知角色名 → 职业。
     返回 (D4Class, ambiguous: bool)。未命中返回 (None, False)。
@@ -300,6 +313,50 @@ def get_class_icon(class_type: D4Class) -> str:
         return '❓'
     info = CLASS_NAMES.get(class_type, {})
     return info.get('icon', '❓')
+
+
+# ============== 职业识别结果持久化(跨会话记住上次识别成功的职业) ==============
+# 策略: OCR 识别到角色名/职业后存盘,之后默认沿用;只有识别到"新角色名"才更新。
+# 这样战斗等无文字画面不会丢失职业,也不会被误判覆盖。
+_CLASS_CACHE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'cache', 'last_class.json'
+)
+
+
+def load_cached_class():
+    """读取上次识别成功的职业。返回 (D4Class|None, char_name:str|None)。"""
+    try:
+        import json
+        if not os.path.exists(_CLASS_CACHE_FILE):
+            return None, None
+        with open(_CLASS_CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        cls_val = data.get('class')
+        name = data.get('char_name')
+        cls = None
+        if cls_val:
+            for c in D4Class:
+                if c.value == cls_val:
+                    cls = c
+                    break
+        return cls, name
+    except Exception:
+        return None, None
+
+
+def save_cached_class(class_type, char_name=None):
+    """保存识别成功的职业(及来源角色名)到磁盘,供下次启动/无文字画面沿用。"""
+    if class_type is None:
+        return
+    try:
+        import json
+        os.makedirs(os.path.dirname(_CLASS_CACHE_FILE), exist_ok=True)
+        cls_val = class_type.value if hasattr(class_type, 'value') else str(class_type)
+        with open(_CLASS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'class': cls_val, 'char_name': char_name or ''},
+                      f, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

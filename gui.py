@@ -242,15 +242,17 @@ class ClassDetectWorker(QThread):
     将 OCR / Vision 查询等耗时操作从主线程移出,避免 GUI 假死。
     主线程通过 frame_ready 信号接收结果,在主线程更新 UI。
     """
-    # 信号: (cls_value:str|None, source:str)
-    result_ready = pyqtSignal(object, str)
+    # 信号: (cls_value:str|None, source:str, char_name:str)
+    result_ready = pyqtSignal(object, str, str)
 
-    def __init__(self, frame, detector, class_icon_detector):
+    def __init__(self, frame, detector, class_icon_detector, has_known_class=False):
         super().__init__()
         # frame 副本(避免与主线程竞争)
         self._frame = frame.copy() if frame is not None else None
         self._detector = detector
         self._class_icon_detector = class_icon_detector
+        # 是否已有已知职业(缓存/上次识别)。已有时,弱信号策略不再覆盖,只认角色名。
+        self._has_known_class = has_known_class
 
     def run(self):
         if self._frame is None or self._frame.size == 0:
@@ -264,9 +266,11 @@ class ClassDetectWorker(QThread):
             from class_recommender import (
                 detect_class_from_character_name,
                 detect_class_from_text,
+                matched_character_name as _matched_character_name,
             )
 
-            # 策略0: 角色名 OCR
+            # ── 策略0(权威): 角色名 OCR ──
+            # 角色名是最可靠的依据。识别到已知角色名 → 直接锁定职业(带角色名,供主线程判断是否"新角色")。
             if self._detector.ocr:
                 try:
                     import cv2 as _cv2
@@ -276,18 +280,27 @@ class ClassDetectWorker(QThread):
                     _name_text = self._detector.ocr.extract_text(_small) or ""
                     name_cls, ambiguous = detect_class_from_character_name(_name_text)
                     if name_cls is not None and not ambiguous:
-                        logger.info(f"[ClassWorker] 角色名映射命中 -> {name_cls.value}")
-                        self.result_ready.emit(name_cls, 'char_name')
+                        matched = _matched_character_name(_name_text)
+                        logger.info(f"[ClassWorker] 角色名映射命中 -> {name_cls.value} (名={matched})")
+                        self.result_ready.emit(name_cls, 'char_name', matched or '')
                         return
                 except Exception as e:
                     logger.debug(f"[ClassWorker] 角色名映射失败: {e}")
 
+            # 已有已知职业(缓存/上次识别成功) → 弱信号策略不再覆盖,保持现状。
+            # 这正是"识别成功后默认沿用,除非发现新角色名"的核心:无角色名时不动职业。
+            if self._has_known_class:
+                logger.info("[ClassWorker] 未读到角色名,已有已知职业,沿用不变")
+                self.result_ready.emit(None, 'keep', '')
+                return
+
+            # ── 以下为"首次识别(尚无已知职业)"时的辅助策略 ──
             # 策略1: 职业图标识别(含技能栏)
             cls = self._class_icon_detector.detect_class(frame)
             if cls is not None:
                 source = getattr(self._class_icon_detector, 'last_detect_source', None) or 'icon'
                 logger.info(f"[ClassWorker] 图标识别命中 -> {cls.value} ({source})")
-                self.result_ready.emit(cls, source)
+                self.result_ready.emit(cls, source, '')
                 return
 
             # 策略2: 右侧面板主属性 OCR
@@ -300,7 +313,7 @@ class ClassDetectWorker(QThread):
                             cls = detect_class_from_attributes(panel_text)
                             if cls is not None:
                                 logger.info(f"[ClassWorker] 主属性命中 -> {cls.value}")
-                                self.result_ready.emit(cls, 'attribute_ocr')
+                                self.result_ready.emit(cls, 'attribute_ocr', '')
                                 return
                     except Exception as e:
                         logger.debug(f"[ClassWorker] 右侧面板 OCR 失败: {e}")
@@ -319,16 +332,16 @@ class ClassDetectWorker(QThread):
                             cls = detect_class_from_text(text)
                             if cls is not None:
                                 logger.info(f"[ClassWorker] {region_name} 关键词命中 -> {cls.value}")
-                                self.result_ready.emit(cls, f'{region_name}_ocr')
+                                self.result_ready.emit(cls, f'{region_name}_ocr', '')
                                 return
                     except Exception as e:
                         logger.debug(f"[ClassWorker] {region_name} OCR 失败: {e}")
 
             logger.info("[ClassWorker] 所有职业识别策略都未命中")
-            self.result_ready.emit(None, 'none')
+            self.result_ready.emit(None, 'none', '')
         except Exception as e:
             logger.warning(f"[ClassWorker] 职业识别失败: {e}", exc_info=True)
-            self.result_ready.emit(None, 'error')
+            self.result_ready.emit(None, 'error', '')
 
 
 class GuideWidget(QWidget):
@@ -724,6 +737,15 @@ class MainWindow(QMainWindow):
         self.current_class = None  # 当前角色职业 (D4Class)
         self.class_builds_cache = {}  # 职业BD缓存 {D4Class: [ClassBuildGuide]}
         self._class_locked_by_user = False  # 用户是否手动锁定了职业
+        # 启动时恢复上次识别成功的职业(跨会话记忆),之后默认沿用,除非读到新角色名
+        try:
+            from class_recommender import load_cached_class
+            _cached_cls, _cached_name = load_cached_class()
+            if _cached_cls is not None:
+                self.current_class = _cached_cls
+                logger.info(f"已恢复上次识别的职业: {_cached_cls.value} (角色名={_cached_name})")
+        except Exception as e:
+            logger.debug(f"恢复职业缓存失败: {e}")
 
         if VOICE_AVAILABLE:
             try:
@@ -2834,18 +2856,34 @@ class MainWindow(QMainWindow):
                 frame=frame,
                 detector=self.detector,
                 class_icon_detector=self._class_icon_detector,
+                has_known_class=(self.current_class is not None),
             )
             self._class_detect_worker.result_ready.connect(self._on_class_detect_result)
             self._class_detect_worker.start()
         except Exception as e:
             logger.warning(f"启动职业识别失败: {e}", exc_info=True)
 
-    def _on_class_detect_result(self, cls, source: str):
-        """ClassDetectWorker 完成后的回调(主线程,可安全更新 UI)"""
-        if cls is not None:
-            self._set_class_directly(cls, source=source)
-        else:
+    def _on_class_detect_result(self, cls, source: str, char_name: str = ''):
+        """ClassDetectWorker 完成后的回调(主线程,可安全更新 UI)
+
+        持久化策略: 角色名识别成功 → 设置职业并存盘(记住,跨会话);
+        source='keep' 表示"已有职业但本帧无角色名" → 保持现状不动;
+        首次(无缓存)的辅助策略命中 → 设置但不存盘(非权威,不长期记忆)。
+        """
+        if source == 'keep':
+            return  # 沿用上次识别成功的职业,不变
+        if cls is None:
             logger.info(f"职业识别未命中 (source={source})")
+            return
+        self._set_class_directly(cls, source=source)
+        # 仅角色名识别为权威来源 → 存盘记住(下次启动/无文字画面沿用)
+        if source == 'char_name' and not self._class_locked_by_user:
+            try:
+                from class_recommender import save_cached_class
+                save_cached_class(cls, char_name)
+                logger.info(f"职业已记忆: {cls.value} (角色名={char_name})")
+            except Exception as e:
+                logger.debug(f"保存职业缓存失败: {e}")
 
     def _ensure_skill_webview(self):
         """在技能Tab里 lazy 创建内嵌 d2core 构筑网页器(WebOverlay embedded模式)"""
