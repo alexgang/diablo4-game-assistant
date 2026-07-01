@@ -3227,18 +3227,28 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(3000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
 
     def _voice_search_quest_guide(self, text):
-        """语音触发攻略搜索"""
+        """语音触发攻略搜索: 先查本地攻略库,未命中则在线搜索(Bing+GLM)兜底"""
         if not text:
             return
+        wv = self._ensure_guide_webview()
+        if wv is None:
+            logger.warning("攻略网页组件不可用,无法语音搜索攻略")
+            return
+        self._switch_to_guide_tab()
         results = search_guide(text)
         if results:
             name, info = results[0]
-            wv = self._ensure_guide_webview()
-            if wv is not None:
-                wv.load_url(info['url'])
-                self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
-                self._switch_to_guide_tab()
-                logger.info(f"语音触发攻略: '{text}' → {name}")
+            wv.load_url(info['url'])
+            self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
+            logger.info(f"语音触发攻略(本地库): '{text}' → {name}")
+        else:
+            # 本地库未匹配 → 在线搜索兜底(后台线程,不阻塞;完成后自动加载最佳URL)
+            self.guide_top_bar.setText(f"🔍 在线搜索攻略: {text} ...")
+            logger.info(f"语音触发攻略(本地未命中,转在线搜索): '{text}'")
+            if hasattr(wv, 'search_online'):
+                wv.search_online(text)
+            else:
+                wv.load_url(GAMERSKY_D4_HOME)
 
     def speak_current_result(self):
         """朗读当前推荐结果"""
