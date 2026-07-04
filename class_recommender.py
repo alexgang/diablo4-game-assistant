@@ -29,10 +29,12 @@ class D4Class(str, Enum):
     """D4 职业枚举"""
     BARBARIAN = "barbarian"  # 野蛮人
     ROGUE = "rogue"  # 游侠
-    SORCERER = "sorcerer"  # 法师
+    SORCERER = "sorcerer"  # 巫师(游戏内中文名,Sorcerer)
     DRUID = "druid"  # 德鲁伊
     NECROMANCER = "necromancer"  # 死灵法师
-    SPIRITBORN = "spiritborn"  # 灵巫（赛季新职业）
+    SPIRITBORN = "spiritborn"  # 灵巫
+    PALADIN = "paladin"  # 圣骑士(Lord of Hatred 资料片新职业)
+    WARLOCK = "warlock"  # 术师(Lord of Hatred 资料片新职业, Warlock)
 
 
 # 职业的中英文名称（用于OCR匹配和显示）
@@ -50,7 +52,7 @@ CLASS_NAMES: Dict[D4Class, Dict[str, str]] = {
         'color': '#e8b923',
     },
     D4Class.SORCERER: {
-        'zh': '法师',
+        'zh': '巫师',
         'en': 'Sorcerer',
         'icon': '🔮',
         'color': '#5b9bd5',
@@ -73,6 +75,18 @@ CLASS_NAMES: Dict[D4Class, Dict[str, str]] = {
         'icon': '🐉',
         'color': '#00b050',
     },
+    D4Class.PALADIN: {
+        'zh': '圣骑士',
+        'en': 'Paladin',
+        'icon': '🛡️',
+        'color': '#f1c40f',
+    },
+    D4Class.WARLOCK: {
+        'zh': '术师',
+        'en': 'Warlock',
+        'icon': '🔥',
+        'color': '#8e44ad',
+    },
 }
 
 
@@ -89,24 +103,33 @@ CLASS_OCR_KEYWORDS: Dict[D4Class, List[str]] = {
         '飞刀乱舞', '飞刀', 'dance of knives', '速射', 'rapid fire',  # S13
     ],
     D4Class.SORCERER: [
-        '法师', '术士', 'warlock', 'sorcerer', 'sorc', 'sor',
+        '巫师', '法师', 'sorcerer', 'sorc', 'sor',  # 游戏内中文名"巫师"
         '冰法', '电法', '火法', '冰霜', '闪电', '燃烧', '电球',
-        '球状闪电', '球闪', 'ball lightning', '冰晶碎片', 'ice shards',  # S13
+        '球状闪电', '球闪', 'ball lightning', '冰晶碎片', 'ice shards',
     ],
     D4Class.DRUID: [
         '德鲁伊', 'druid',
         '狼人', '熊人', '风暴', '土狼', '伙伴', '大地',
-        '同伴', 'companion', '山崩', 'landslide',  # S13
+        '同伴', 'companion', '山崩', 'landslide',
     ],
     D4Class.NECROMANCER: [
         '死灵法师', '死灵', 'necromancer', 'necro', 'nec',  # 死灵法师(4字)须先于法师(2字)命中
         '骷髅', '召唤', '亡者之书', '傀儡', '骨矛', '血雾', '钢铁',
-        '血潮', '血浪', 'blood wave', '血涌', 'blood surge',  # S13
+        '血潮', '血浪', 'blood wave', '血涌', 'blood surge',
     ],
     D4Class.SPIRITBORN: [
         '灵巫', 'spiritborn',
         '虎掌', '鹰爪', '神龙', '朱鹤', '千喉',
-        '闪避', 'evade', '反击', 'counterswarm', '尖刺齐射', 'quill volley',  # S13
+        '闪避', 'evade', '反击', 'counterswarm', '尖刺齐射', 'quill volley',
+    ],
+    D4Class.PALADIN: [
+        '圣骑士', 'paladin', 'pal',  # Lord of Hatred 资料片
+        '正义', '狂热者', '审判者', '门徒', '主宰',  # 四誓约 Juggernaut/Zealot/Judicator/Disciple
+        'juggernaut', 'zealot', 'judicator', 'disciple', '圣锤', '光环',
+    ],
+    D4Class.WARLOCK: [
+        '术师', 'warlock',  # Lord of Hatred 资料片(勿与"术士/巫师"混淆)
+        '地狱火', '恶魔', '召唤恶魔', '邪术', 'hellfire', 'eldritch',
     ],
 }
 
@@ -119,6 +142,8 @@ CHARACTER_NAME_TO_CLASS: Dict[str, D4Class] = {
     '芝麻莱妮雅': D4Class.BARBARIAN,
     '芝麻苏玛雅': D4Class.ROGUE,
     '芝麻冬瓜': D4Class.SORCERER,
+    '芝麻赛斯美': D4Class.WARLOCK,   # 术师
+    '芝麻厚礼活': D4Class.PALADIN,   # 圣骑士
     # '芝麻老狼' 重名:既有死灵也有德鲁伊 —— 见 AMBIGUOUS_NAMES,需消歧
 }
 
@@ -265,6 +290,25 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
                 'skills': _img('spirit_evade_skills.png'),
                 'paragon': _img('spirit_evade_paragon.png'),
             },
+        ),
+    ],
+    # 资料片新职业 —— d2core 构筑 URL 待用户提供后替换
+    D4Class.PALADIN: [
+        ClassBuildGuide(
+            class_type=D4Class.PALADIN,
+            build_name='圣骑士构筑',
+            season='',
+            source_url='https://www.d2core.com/d4',
+            image_paths={},
+        ),
+    ],
+    D4Class.WARLOCK: [
+        ClassBuildGuide(
+            class_type=D4Class.WARLOCK,
+            build_name='术师构筑',
+            season='',
+            source_url='https://www.d2core.com/d4',
+            image_paths={},
         ),
     ],
 }

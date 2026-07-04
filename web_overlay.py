@@ -131,6 +131,13 @@ CLASS_RECOMMENDED_BUILDS = {
         ('风暴德', f'{D4CORE_BASE}/planner?bd=1SDs'),
         ('狼人', f'{D4CORE_BASE}/planner?bd=1SDw'),
     ],
+    # 资料片新职业(圣骑士/术师) —— d2core 构筑 URL 待补(用户提供后替换 bd 码)
+    'paladin': [
+        ('圣骑士构筑', f'{D4CORE_BASE}/d4'),
+    ],
+    'warlock': [
+        ('术师构筑', f'{D4CORE_BASE}/d4'),
+    ],
 }
 
 
@@ -138,10 +145,9 @@ CLASS_RECOMMENDED_BUILDS = {
 CLASS_NAME_TO_KEY = {
     '野蛮人': 'barbarian',
     'barbarian': 'barbarian',
+    '巫师': 'sorcerer',
     '法师': 'sorcerer',
     'sorcerer': 'sorcerer',
-    '术士': 'sorcerer',
-    'warlock': 'sorcerer',
     '游侠': 'rogue',
     'rogue': 'rogue',
     '死灵法师': 'necromancer',
@@ -151,6 +157,10 @@ CLASS_NAME_TO_KEY = {
     'spiritborn': 'spiritborn',
     '德鲁伊': 'druid',
     'druid': 'druid',
+    '圣骑士': 'paladin',
+    'paladin': 'paladin',
+    '术师': 'warlock',   # 资料片新职业(勿与"术士/巫师"混淆)
+    'warlock': 'warlock',
 }
 
 
