@@ -1025,7 +1025,7 @@ class VoiceAssistant:
             name = data.get('name', data.get('title', query))
             return f'找到相关信息：{name}'
 
-    def start_continuous_listening(self, wake_word='diablo', callback=None,
+    def start_continuous_listening(self, wake_word='大菠萝', callback=None,
                                   cooldown=10.0, min_text_length=2):
         """启动持续监听模式（唤醒词激活）
 
@@ -1043,8 +1043,18 @@ class VoiceAssistant:
         self.on_result = callback
         self._wake_word = wake_word
 
+        # 唤醒词匹配容错: 用中文"大菠萝"(暗黑玩家常用昵称),中文ASR识别中文远比英文稳。
+        # 收集常见谐音变体(应对ASR小误差),命中任一即视为唤醒。
+        _wake_variants = [w.lower() for w in [
+            wake_word, '大菠萝', '大波萝', '大波罗', '大菠罗', '打菠萝',
+            '打波萝', '大伯罗', '大播罗', '菠萝', '波萝',
+        ] if w]
+
+        def _hit_wake(t_lower):
+            return any(v in t_lower for v in _wake_variants)
+
         def _listen_loop():
-            logger.info(f"持续监听已启动 (唤醒词='{wake_word}', 冷却={cooldown}s)")
+            logger.info(f"持续监听已启动 (唤醒词='{wake_word}', 冷却={cooldown}s, 变体={_wake_variants})")
             last_trigger_time = 0.0
             while not self._stop_event.is_set():
                 try:
@@ -1054,21 +1064,27 @@ class VoiceAssistant:
 
                     # 噪声过滤:文本太短视为噪声
                     text = text.strip()
+                    # 诊断: 打印每次识别到的原始文字(定位"没唤醒"是否因STT识别成了别的词)
+                    logger.info(f"[唤醒监听] STT识别: '{text}'")
                     if len(text) < min_text_length:
                         continue
 
-                    # 唤醒词检测
+                    # 唤醒词检测(带谐音容错)
                     if wake_word:
-                        if wake_word.lower() not in text.lower():
+                        if not _hit_wake(text.lower()):
+                            logger.debug(f"[唤醒监听] 未含唤醒词,忽略: '{text}'")
                             continue
+                        logger.info(f"[唤醒监听] ✓ 命中唤醒词 → '{text}'")
                         # 冷却时间检查(避免频繁误激活)
                         now = time.time()
                         if now - last_trigger_time < cooldown:
                             logger.debug(f"唤醒词冷却中,跳过 (距上次 {now-last_trigger_time:.1f}s)")
                             continue
                         last_trigger_time = now
-                        # 去除唤醒词,提取实际指令
-                        text = re.sub(re.escape(wake_word), '', text, flags=re.IGNORECASE).strip()
+                        # 去除唤醒词及其谐音变体,提取实际指令
+                        for _v in _wake_variants:
+                            text = re.sub(re.escape(_v), '', text, flags=re.IGNORECASE)
+                        text = text.strip(' ,，。.、')
 
                     if not text:
                         # 只说了唤醒词,没有指令 → 待命响应

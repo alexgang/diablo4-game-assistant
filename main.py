@@ -78,11 +78,20 @@ def ensure_sdk_server():
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s %(levelname)s: %(message)s',
-        datefmt='%H:%M:%S'
-    )
+    # 日志同时输出到控制台 + 文件(game_assistant.log,UTF-8),便于事后/远程排查语音等问题
+    _log_fmt = logging.Formatter('%(asctime)s %(levelname)s: %(message)s', datefmt='%H:%M:%S')
+    _root = logging.getLogger()
+    _root.setLevel(logging.INFO)
+    _console = logging.StreamHandler()
+    _console.setFormatter(_log_fmt)
+    _root.addHandler(_console)
+    try:
+        _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'game_assistant.log')
+        _fileh = logging.FileHandler(_log_path, mode='w', encoding='utf-8')
+        _fileh.setFormatter(_log_fmt)
+        _root.addHandler(_fileh)
+    except Exception:
+        pass
 
     print("=" * 50)
     print("    暗黑破坏神游戏助手")

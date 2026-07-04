@@ -1060,7 +1060,7 @@ class MainWindow(QMainWindow):
         # 语音菜单
         menu_voice = menubar.addMenu("语音")
         menu_voice.addAction("语音输入", self.toggle_voice_listening)
-        menu_voice.addAction("唤醒词监听 (diablo)", self.toggle_wake_word_listening)
+        menu_voice.addAction("唤醒词监听 (大菠萝)", self.toggle_wake_word_listening)
         menu_voice.addAction("朗读结果", self.speak_current_result)
         menu_voice.addAction("停止朗读", self.stop_speaking)
 
@@ -3152,7 +3152,7 @@ class MainWindow(QMainWindow):
             self.voice_worker = None
 
     def toggle_wake_word_listening(self):
-        """切换唤醒词持续监听模式(默认唤醒词 'diablo', voice_1+voice_5)"""
+        """切换唤醒词持续监听模式(默认唤醒词 '大菠萝', voice_1+voice_5)"""
         if not self.voice_assistant:
             return
         if not self.voice_assistant.voice_input.available:
@@ -3167,15 +3167,15 @@ class MainWindow(QMainWindow):
             logger.info("唤醒词持续监听已停止")
         else:
             self.voice_assistant.start_continuous_listening(
-                wake_word='diablo',
+                wake_word='大菠萝',
                 callback=self._on_voice_result,
                 cooldown=10.0,
             )
-            self.voice_listen_btn.setText("🎤 唤醒监听中 (diablo)...")
+            self.voice_listen_btn.setText("🎤 唤醒监听中 (大菠萝)...")
             self.voice_listen_btn.setStyleSheet(
                 "color: #e74c3c; background-color: transparent; font-size: 12px;"
             )
-            logger.info("唤醒词持续监听已启动 (唤醒词='diablo')")
+            logger.info("唤醒词持续监听已启动 (唤醒词='大菠萝')")
 
     def _on_voice_result(self, result):
         """处理语音识别结果 - 含意图路由(voice_6)"""

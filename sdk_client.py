@@ -453,13 +453,13 @@ class GamingAssistantSDK:
             result = self._check(resp)
             if isinstance(result, dict):
                 # 兼容多种返回格式: {'output': '...'} / {'text': '...'} / {'result': '...'}
-                return (
-                    result.get("output")
-                    or result.get("text")
-                    or result.get("result")
-                    or str(result)
-                )
-            return str(result)
+                # 注意: 静音时 output 为空字符串,应返回 ''(而非 str(dict) 那种垃圾)
+                for k in ("output", "text", "result"):
+                    v = result.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+                return ''
+            return str(result).strip() if result else ''
         finally:
             for _, f_tuple in files:
                 f_tuple[1].close()
