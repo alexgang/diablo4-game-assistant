@@ -267,19 +267,26 @@ class ClassDetectWorker(QThread):
 
             # ── 策略0(权威): 角色名 OCR ──
             # 角色名是最可靠的依据。识别到已知角色名 → 直接锁定职业(带角色名,供主线程判断是否"新角色")。
+            # 角色名在装备/角色界面通常位于左上角,单独取该区域(不缩小,保留清晰度)以提高OCR准确率。
             if self._detector.ocr:
                 try:
                     import cv2 as _cv2
                     _h, _w = frame.shape[:2]
-                    _small = _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
-                                         interpolation=_cv2.INTER_AREA)
-                    _name_text = self._detector.ocr.extract_text(_small) or ""
-                    name_cls, ambiguous = detect_class_from_character_name(_name_text)
-                    if name_cls is not None and not ambiguous:
-                        matched = _matched_character_name(_name_text)
-                        logger.info(f"[ClassWorker] 角色名映射命中 -> {name_cls.value} (名={matched})")
-                        self.result_ready.emit(name_cls, 'char_name', matched or '')
-                        return
+                    # 多个候选区域: 左上角角色名区(原分辨率) + 缩小半屏(兜底)
+                    _regions = [
+                        ('左上角名区', frame[0:int(_h * 0.14), 0:int(_w * 0.40)]),
+                        ('半屏', _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
+                                             interpolation=_cv2.INTER_AREA)),
+                    ]
+                    for _rname, _reg in _regions:
+                        _name_text = self._detector.ocr.extract_text(_reg) or ""
+                        logger.info(f"[ClassWorker] 角色名OCR[{_rname}]: '{_name_text[:60]}'")
+                        name_cls, ambiguous = detect_class_from_character_name(_name_text)
+                        if name_cls is not None and not ambiguous:
+                            matched = _matched_character_name(_name_text)
+                            logger.info(f"[ClassWorker] 角色名映射命中 -> {name_cls.value} (名={matched})")
+                            self.result_ready.emit(name_cls, 'char_name', matched or '')
+                            return
                 except Exception as e:
                     logger.debug(f"[ClassWorker] 角色名映射失败: {e}")
 
@@ -3199,6 +3206,13 @@ class MainWindow(QMainWindow):
                 self._current_boss_name = boss_data['name']
                 self._boss_data_cache = boss_data
                 logger.info(f"语音查BOSS: {query} → {boss_data['name']}")
+                # TTS 播报 BOSS 弱点/克制(去掉emoji,更适合朗读)
+                _spk = f"{boss_data['name']}。弱点: {'、'.join(rec['weakness_elements'])}。"
+                if rec.get('resist_elements'):
+                    _spk += f"抗性: {'、'.join(rec['resist_elements'])}。"
+                if rec.get('tips'):
+                    _spk += rec['tips']
+                self._voice_speak(_spk)
             else:
                 self._voice_search_quest_guide(text)
 
@@ -3225,7 +3239,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(3000, lambda: self.voice_speak_btn.setText("🔊 朗读结果"))
 
     def _voice_search_quest_guide(self, text):
-        """语音触发攻略搜索: 先查本地攻略库,未命中则在线搜索(Bing+GLM)兜底"""
+        """语音触发攻略搜索: 先查本地攻略库,未命中则在线搜索(Bing+GLM)兜底。
+        找到攻略后 TTS 播报摘要,让语音查攻略形成'问→答'闭环。"""
         if not text:
             return
         wv = self._ensure_guide_webview()
@@ -3239,14 +3254,35 @@ class MainWindow(QMainWindow):
             wv.load_url(info['url'])
             self.guide_top_bar.setText(f"📖 攻略: {name} (语音触发)")
             logger.info(f"语音触发攻略(本地库): '{text}' → {name}")
+            # 本地攻略是网页,无现成摘要文本,播报"已找到"提示
+            self._voice_speak(f"已为你找到{name}的攻略,请看屏幕。")
         else:
-            # 本地库未匹配 → 在线搜索兜底(后台线程,不阻塞;完成后自动加载最佳URL)
+            # 本地库未匹配 → 在线搜索兜底(后台线程,不阻塞;完成后自动加载并播报摘要)
             self.guide_top_bar.setText(f"🔍 在线搜索攻略: {text} ...")
             logger.info(f"语音触发攻略(本地未命中,转在线搜索): '{text}'")
+            self._voice_speak(f"正在为你搜索{text}的攻略,请稍候。")
+            # 设置摘要就绪回调 → GLM汇总完成后 TTS 播报攻略摘要
+            wv.on_summary_ready = self._on_guide_summary_ready
             if hasattr(wv, 'search_online'):
                 wv.search_online(text)
             else:
                 wv.load_url(GAMERSKY_D4_HOME)
+
+    def _on_guide_summary_ready(self, title, summary):
+        """在线攻略摘要就绪 → TTS 播报(语音查攻略的'答')"""
+        logger.info(f"语音播报攻略摘要: {title} ({len(summary)}字)")
+        self._voice_speak(summary)
+
+    def _voice_speak(self, text):
+        """统一的 TTS 播报入口(语音查攻略结果用)"""
+        if not text:
+            return
+        try:
+            va = self.voice_assistant
+            if va and getattr(va, 'voice_output', None) and va.voice_output.available:
+                va.voice_output.speak(text, blocking=False)
+        except Exception as e:
+            logger.debug(f"TTS播报失败: {e}")
 
     def speak_current_result(self):
         """朗读当前推荐结果"""

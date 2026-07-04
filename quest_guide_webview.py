@@ -416,6 +416,13 @@ class QuestGuideWebView(QWidget):
         # 显示 LLM 汇总说明(通过 QObject 属性传递,由 gui.py 读取)
         self._online_summary = result.get('summary', '')
         self._online_title = result.get('title', '')
+        # 摘要就绪回调(供 gui.py 语音播报攻略摘要);在主线程调用,安全
+        cb = getattr(self, 'on_summary_ready', None)
+        if cb and self._online_summary:
+            try:
+                cb(self._online_title, self._online_summary)
+            except Exception as e:
+                logger.debug(f"[QuestGuide] on_summary_ready 回调失败: {e}")
 
     def _apply_online_failed(self, keyword):
         """在线搜索失败时加载 Bing 搜索页兜底"""
