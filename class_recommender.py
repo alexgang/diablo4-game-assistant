@@ -292,22 +292,22 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
             },
         ),
     ],
-    # 资料片新职业 —— d2core 构筑 URL 待用户提供后替换
+    # 资料片新职业: d2core 暂无固定 bd 码,用构筑列表页(页面内按职业筛选)
     D4Class.PALADIN: [
         ClassBuildGuide(
             class_type=D4Class.PALADIN,
-            build_name='圣骑士构筑',
+            build_name='圣骑士构筑列表',
             season='',
-            source_url='https://www.d2core.com/d4',
+            source_url='https://www.d2core.com/d4/builds',
             image_paths={},
         ),
     ],
     D4Class.WARLOCK: [
         ClassBuildGuide(
             class_type=D4Class.WARLOCK,
-            build_name='术师构筑',
+            build_name='术师构筑列表',
             season='',
-            source_url='https://www.d2core.com/d4',
+            source_url='https://www.d2core.com/d4/builds',
             image_paths={},
         ),
     ],

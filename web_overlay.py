@@ -131,12 +131,12 @@ CLASS_RECOMMENDED_BUILDS = {
         ('风暴德', f'{D4CORE_BASE}/planner?bd=1SDs'),
         ('狼人', f'{D4CORE_BASE}/planner?bd=1SDw'),
     ],
-    # 资料片新职业(圣骑士/术师) —— d2core 构筑 URL 待补(用户提供后替换 bd 码)
+    # 资料片新职业(圣骑士/术师): d2core 暂无固定 bd 码,用构筑列表页,页面内按职业筛选
     'paladin': [
-        ('圣骑士构筑', f'{D4CORE_BASE}/d4'),
+        ('圣骑士构筑列表', f'{D4CORE_BASE}/d4/builds'),
     ],
     'warlock': [
-        ('术师构筑', f'{D4CORE_BASE}/d4'),
+        ('术师构筑列表', f'{D4CORE_BASE}/d4/builds'),
     ],
 }
 
