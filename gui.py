@@ -267,14 +267,14 @@ class ClassDetectWorker(QThread):
 
             # ── 策略0(权威): 角色名 OCR ──
             # 角色名是最可靠的依据。识别到已知角色名 → 直接锁定职业(带角色名,供主线程判断是否"新角色")。
-            # 角色名在装备/角色界面通常位于左上角,单独取该区域(不缩小,保留清晰度)以提高OCR准确率。
+            # 角色名在装备/角色界面位于右上角,单独取该区域(不缩小,保留清晰度)以提高OCR准确率。
             if self._detector.ocr:
                 try:
                     import cv2 as _cv2
                     _h, _w = frame.shape[:2]
-                    # 多个候选区域: 左上角角色名区(原分辨率) + 缩小半屏(兜底)
+                    # 多个候选区域: 右上角角色名区(原分辨率) + 缩小半屏(兜底)
                     _regions = [
-                        ('左上角名区', frame[0:int(_h * 0.14), 0:int(_w * 0.40)]),
+                        ('右上角名区', frame[0:int(_h * 0.14), int(_w * 0.58):_w]),
                         ('半屏', _cv2.resize(frame, (max(_w // 2, 960), max(_h // 2, 540)),
                                              interpolation=_cv2.INTER_AREA)),
                     ]
@@ -2931,6 +2931,11 @@ class MainWindow(QMainWindow):
                     logger.info("构筑窗口被隐藏,已重新显示")
             except Exception:
                 pass
+            # 职业没变,但内嵌构筑网页可能还没加载过该职业(如启动时从缓存恢复了职业,
+            # 之后每次识别都"没变化"导致 _sync_overlay_with_class 从不触发)。
+            # 若技能网页尚未加载此职业,补加载一次。
+            if getattr(self, '_skill_web_class', None) != cls:
+                self._sync_overlay_with_class(cls)
         if cls != self.current_class:
             self.current_class = cls
             logger.info(
