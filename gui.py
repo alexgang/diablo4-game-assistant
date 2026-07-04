@@ -259,10 +259,6 @@ class ClassDetectWorker(QThread):
             return
         frame = self._frame
         try:
-            from class_icon_detector import (
-                crop_right_panel,
-                detect_class_from_attributes,
-            )
             from class_recommender import (
                 detect_class_from_character_name,
                 detect_class_from_text,
@@ -303,22 +299,12 @@ class ClassDetectWorker(QThread):
                 self.result_ready.emit(cls, source, '')
                 return
 
-            # 策略2: 右侧面板主属性 OCR
-            if self._detector.ocr:
-                right_panel = crop_right_panel(frame, ratio=0.45)
-                if right_panel is not None:
-                    try:
-                        panel_text = self._detector.ocr.extract_text(right_panel)
-                        if panel_text:
-                            cls = detect_class_from_attributes(panel_text)
-                            if cls is not None:
-                                logger.info(f"[ClassWorker] 主属性命中 -> {cls.value}")
-                                self.result_ready.emit(cls, 'attribute_ocr', '')
-                                return
-                    except Exception as e:
-                        logger.debug(f"[ClassWorker] 右侧面板 OCR 失败: {e}")
+            # 策略2(已弃用): 主属性 OCR 反推。
+            # D4 只有4种主属性但有8个职业,必然多职业共享同一属性(如圣骑士敏捷最高会被
+            # 误判成游侠rogue),对新职业(圣骑士/术师)根本无法区分,反而污染识别结果。
+            # 故禁用主属性兜底,职业识别只信"角色名"(权威)+关键词(需命中职业名/技能名)。
 
-            # 策略3: OCR 关键词兜底
+            # 策略3: OCR 关键词兜底(需匹配到明确的职业名/技能名,不会像主属性那样瞎猜)
             if self._detector.ocr:
                 import cv2
                 h, w = frame.shape[:2]
@@ -680,8 +666,13 @@ class MiniIconWidget(QWidget):
 class MainWindow(QMainWindow):
     """主窗口"""
 
+    # 语音识别结果信号: 唤醒监听回调在子线程触发,通过此信号切回主线程处理UI
+    # (Qt要求UI操作必须在主线程,否则崩溃/静默失败)
+    _voice_result_signal = pyqtSignal(dict)
+
     def __init__(self, use_web_data=False, use_ocr=True, ocr_engine=None, stt_engine='google', tts_engine='auto'):
         super().__init__()
+        self._voice_result_signal.connect(self._handle_voice_result)
         self.detector = GameDetector(use_web_data=use_web_data, use_ocr=use_ocr, ocr_engine=ocr_engine)
         self.stt_engine = stt_engine
         self.tts_engine = tts_engine
@@ -3178,7 +3169,14 @@ class MainWindow(QMainWindow):
             logger.info("唤醒词持续监听已启动 (唤醒词='大菠萝')")
 
     def _on_voice_result(self, result):
-        """处理语音识别结果 - 含意图路由(voice_6)"""
+        """语音识别结果入口(可能在子线程被调用) - 转发到主线程处理"""
+        try:
+            self._voice_result_signal.emit(result or {})
+        except Exception as e:
+            logger.error(f"转发语音结果失败: {e}")
+
+    def _handle_voice_result(self, result):
+        """在主线程处理语音识别结果 - 含意图路由(voice_6)"""
         self.guide_widget.update_voice_result(result)
 
         intent = result.get('intent', '')
