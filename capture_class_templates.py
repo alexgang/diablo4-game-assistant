@@ -5,7 +5,7 @@
 1. 先启动游戏助手(确保 SDK 服务器已运行)
 2. 在游戏中切换到任意职业(技能栏在所有界面都可见)
 3. 运行本脚本: python capture_class_templates.py
-4. 按提示输入当前职业(barbarian/rogue/sorcerer/druid/necromancer/spiritborn)
+4. 按提示输入当前职业(barbarian/rogue/sorcerer/druid/necromancer/paladin)
 5. 脚本自动截图 + 裁剪技能栏 + 保存模板
 6. 切换到下一个职业,重复操作
 
@@ -33,7 +33,7 @@ CLASS_LIST = [
     ('sorcerer', '法师'),
     ('druid', '德鲁伊'),
     ('necromancer', '死灵法师'),
-    ('spiritborn', '灵巫'),
+    ('paladin', '圣骑士'),
 ]
 
 
@@ -138,7 +138,7 @@ def main():
         print("请在游戏中切换到目标职业,然后输入职业英文名")
         print("输入 'quit' 退出,输入 'list' 查看已采集模板")
         print("提示: 先按 Win+Shift+S 或 PrintScreen 截图,再输入 'paste <职业>' 从剪贴板导入")
-        user_input = input("职业 (barbarian/rogue/sorcerer/druid/necromancer/spiritborn): ").strip().lower()
+        user_input = input("职业 (barbarian/rogue/sorcerer/druid/necromancer/paladin): ").strip().lower()
 
         if user_input == 'quit' or user_input == 'q':
             break

@@ -5,7 +5,7 @@ fetch_build_images.py 读这里。planner 页是长图,整页截图含技能树+
 
 字段: class 职业 / name 构筑名(显示用) / kind 图类型 / url d2core planner页 / file 输出名
 
-★德鲁伊/灵巫: d2core首页未列出,暂用 maxroll 兜底或后续补 d2core URL。
+★德鲁伊/圣骑士: d2core首页未列出,暂用 maxroll 兜底或后续补 d2core URL。
 """
 
 BUILD_SHOTS = [

@@ -128,7 +128,7 @@ SDK_CONFIG = {
     },
     'asr': {
         'enabled': True,
-        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 灵巫 游侠',
+        'hotwords': '暗黑破坏神 都瑞尔 墨菲斯托 巴尔 安达利尔 野蛮人 法师 死灵法师 德鲁伊 圣骑士 游侠',
     },
     'bar': {
         'enabled': True,

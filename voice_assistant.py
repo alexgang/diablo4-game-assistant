@@ -1025,7 +1025,7 @@ class VoiceAssistant:
             name = data.get('name', data.get('title', query))
             return f'找到相关信息：{name}'
 
-    def start_continuous_listening(self, wake_word='大菠萝', callback=None,
+    def start_continuous_listening(self, wake_word='diablo', callback=None,
                                   cooldown=10.0, min_text_length=2):
         """启动持续监听模式（唤醒词激活）
 
@@ -1043,13 +1043,11 @@ class VoiceAssistant:
         self.on_result = callback
         self._wake_word = wake_word
 
-        # 唤醒词匹配容错: 用中文"大菠萝"(暗黑玩家常用昵称),中文ASR识别中文远比英文稳。
-        # 收集常见谐音变体(应对ASR小误差),命中任一即视为唤醒。
-        # 实测STT把"大菠萝"听成过"阿波罗",故补两字核心变体(波罗/波萝/菠萝/波楼等)。
+        # 唤醒词匹配容错: STT 常把英文 diablo 听成中/英谐音,精确子串匹配会漏。
+        # 收集一批常见变体(小写),命中任一即视为唤醒。
         _wake_variants = [w.lower() for w in [
-            wake_word, '大菠萝', '大波萝', '大波罗', '大菠罗', '打菠萝',
-            '打波萝', '大伯罗', '大播罗', '阿波罗', '啊波罗', '波罗蜜',
-            '菠萝', '波萝', '波罗', '菠罗', '播罗', '波楼', '波露',
+            wake_word, 'diablo', 'diable', 'diablo4', '暗黑', '迪亚波罗',
+            '地暴罗', '底阿波罗', 'the ablo', 'the app low', 'dia blo', 'giablo',
         ] if w]
 
         def _hit_wake(t_lower):
@@ -1086,12 +1084,10 @@ class VoiceAssistant:
                         # 去除唤醒词及其谐音变体,提取实际指令
                         for _v in _wake_variants:
                             text = re.sub(re.escape(_v), '', text, flags=re.IGNORECASE)
-                        text = text.strip(' ,，。.、?？!！')
-                        logger.info(f"[唤醒监听] 去唤醒词后指令: '{text}'")
+                        text = text.strip(' ,，。.、')
 
                     if not text:
                         # 只说了唤醒词,没有指令 → 待命响应
-                        logger.info("[唤醒监听] 无指令,待命响应")
                         result = {
                             'text': wake_word,
                             'intent': 'wake',
@@ -1102,20 +1098,13 @@ class VoiceAssistant:
                         if self.voice_output.available:
                             self.voice_output.speak(result['response'], blocking=False)
                     else:
-                        logger.info(f"[唤醒监听] 调用process_text: '{text}'")
                         result = self.process_text(text)
-                        logger.info(f"[唤醒监听] process_text完成: intent={result.get('intent')} query={result.get('query')}")
 
                     if self.on_result:
-                        logger.info("[唤醒监听] 调用 on_result 回调")
-                        try:
-                            self.on_result(result)
-                            logger.info("[唤醒监听] on_result 回调完成")
-                        except Exception as cbe:
-                            logger.error(f"[唤醒监听] on_result 回调异常: {cbe}", exc_info=True)
+                        self.on_result(result)
 
                 except Exception as e:
-                    logger.error(f"监听异常: {e}", exc_info=True)
+                    logger.error(f"监听异常: {e}")
                     time.sleep(1)
 
             self.is_listening = False

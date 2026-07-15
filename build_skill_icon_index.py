@@ -8,7 +8,7 @@
   scene_id = skill_icon_sorcerer
   scene_id = skill_icon_druid
   scene_id = skill_icon_necromancer
-  scene_id = skill_icon_spiritborn   (灵巫,赛季新职业)
+  scene_id = skill_icon_paladin   (圣骑士)
 
 查询时，技能栏图标匹配到某职业的任何技能池图标 → 该职业
 
@@ -31,9 +31,9 @@ SDK_URL = SDK_CONFIG['server_url']
 INSTANCE_ID = SDK_CONFIG['instance_id']
 POOL_DIR = os.path.join(os.path.dirname(__file__), 'class_icon_templates', 'pool')
 
-# 6 个职业全列(含灵巫 spiritborn);采集了哪个职业的图标,POOL_DIR 下就会有对应子目录,
+# 6 个职业全列(含圣骑士 paladin);采集了哪个职业的图标,POOL_DIR 下就会有对应子目录,
 # 没有子目录的职业会在 add_skill_icons_to_index 里被自动跳过,所以全列不会报错。
-CLASSES = ['barbarian', 'rogue', 'sorcerer', 'druid', 'necromancer', 'spiritborn']
+CLASSES = ['barbarian', 'rogue', 'sorcerer', 'druid', 'necromancer', 'paladin']
 
 
 def add_skill_icons_to_index(sdk):
@@ -172,9 +172,16 @@ def test_match(sdk):
                 print(f"  图标{i}: 纯色,跳过")
                 continue
 
-            # 保存图标到临时文件
+            # 保存图标到临时文件(黑白预处理,与入库图标色彩空间一致)
             icon_path = os.path.join(tmp_dir, f'query_icon_{i}.png')
-            cv2.imwrite(icon_path, icon)
+            try:
+                from icon_preprocess import preprocess_query_icon
+                icon_proc = preprocess_query_icon(icon)
+                if icon_proc is None:
+                    continue
+            except Exception:
+                icon_proc = icon
+            cv2.imwrite(icon_path, icon_proc)
 
             try:
                 results = sdk.vision_query(

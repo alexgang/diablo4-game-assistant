@@ -18,7 +18,7 @@ test_texts = [
     'Druid 大地熊',
     '游侠箭雨',
     '法师冰法',
-    '灵巫虎掌猛击',
+    '圣骑士祝福光环',
     '这是一个无关的文本',
 ]
 for text in test_texts:

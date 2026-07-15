@@ -51,7 +51,7 @@ test_scenarios = [
     ('rogue', '我的游侠在用穿刺'),
     ('sorcerer', '冰法正在输出'),
     ('druid', '德鲁伊大地熊'),
-    ('spiritborn', '灵巫虎掌'),
+    ('paladin', '圣骑士祝福光环'),
 ]
 for name, text in test_scenarios:
     cls = detect_class_from_text(text)

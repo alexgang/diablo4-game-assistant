@@ -94,7 +94,7 @@ POPULAR_BUILDS = [
     ('法师 - 电球', f'{D4CORE_BASE}/planner?bd=1Tok'),
     ('游侠 - 穿透箭', f'{D4CORE_BASE}/planner?bd=1UFG'),
     ('死灵 - 纯招骷髅', f'{D4CORE_BASE}/planner?bd=1T85'),
-    ('灵巫 - 妙妙剔骨', f'{D4CORE_BASE}/planner?bd=1STz'),
+    ('圣骑士 - 祝福光环', f'{D4CORE_BASE}/planner?bd=1STz'),
 ]
 
 
@@ -121,22 +121,15 @@ CLASS_RECOMMENDED_BUILDS = {
         ('骨矛', f'{D4CORE_BASE}/planner?bd=1T8N'),
         ('血雾', f'{D4CORE_BASE}/planner?bd=1T8P'),
     ],
-    'spiritborn': [
-        ('灵巫 - 千喉', f'{D4CORE_BASE}/planner?bd=1STz'),
-        ('灵巫 - 虎掌', f'{D4CORE_BASE}/planner?bd=1STh'),
-        ('灵巫 - 鹰爪', f'{D4CORE_BASE}/planner?bd=1STj'),
+    'paladin': [
+        ('圣骑士 - 祝福光环', f'{D4CORE_BASE}/planner?bd=1STz'),
+        ('圣骑士 - 神圣之盾', f'{D4CORE_BASE}/planner?bd=1STh'),
+        ('圣骑士 - 审判', f'{D4CORE_BASE}/planner?bd=1STj'),
     ],
     'druid': [
         ('伙伴流', f'{D4CORE_BASE}/planner?bd=1SDb'),
         ('风暴德', f'{D4CORE_BASE}/planner?bd=1SDs'),
         ('狼人', f'{D4CORE_BASE}/planner?bd=1SDw'),
-    ],
-    # 资料片新职业(圣骑士/术师): d2core 暂无固定 bd 码,用构筑列表页,页面内按职业筛选
-    'paladin': [
-        ('圣骑士构筑列表', f'{D4CORE_BASE}/d4/builds'),
-    ],
-    'warlock': [
-        ('术师构筑列表', f'{D4CORE_BASE}/d4/builds'),
     ],
 }
 
@@ -145,22 +138,19 @@ CLASS_RECOMMENDED_BUILDS = {
 CLASS_NAME_TO_KEY = {
     '野蛮人': 'barbarian',
     'barbarian': 'barbarian',
-    '巫师': 'sorcerer',
     '法师': 'sorcerer',
     'sorcerer': 'sorcerer',
+    '术士': 'sorcerer',
+    'warlock': 'sorcerer',
     '游侠': 'rogue',
     'rogue': 'rogue',
     '死灵法师': 'necromancer',
     '死灵': 'necromancer',
     'necromancer': 'necromancer',
-    '灵巫': 'spiritborn',
-    'spiritborn': 'spiritborn',
-    '德鲁伊': 'druid',
-    'druid': 'druid',
     '圣骑士': 'paladin',
     'paladin': 'paladin',
-    '术师': 'warlock',   # 资料片新职业(勿与"术士/巫师"混淆)
-    'warlock': 'warlock',
+    '德鲁伊': 'druid',
+    'druid': 'druid',
 }
 
 

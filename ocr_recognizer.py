@@ -463,8 +463,8 @@ class GameStateRecognizer:
 
         self.class_keywords = {
             '野蛮人': 'barbarian', '巫师': 'sorcerer', '德鲁伊': 'druid',
-            '游侠': 'rogue', '死灵法师': 'necromancer', '灵巫': 'spiritborn',
-            '圣骑士': 'paladin', '术士': 'warlock',
+            '游侠': 'rogue', '死灵法师': 'necromancer',
+            '圣骑士': 'paladin', 'paladin': 'paladin', '术士': 'warlock',
         }
 
     def recognize_quest(self, text):

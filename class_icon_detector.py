@@ -40,7 +40,7 @@ CLASS_FROM_SCENE_ID = {
     f"{ICON_SCENE_PREFIX}sorcerer": D4Class.SORCERER,
     f"{ICON_SCENE_PREFIX}druid": D4Class.DRUID,
     f"{ICON_SCENE_PREFIX}necromancer": D4Class.NECROMANCER,
-    f"{ICON_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
+    f"{ICON_SCENE_PREFIX}paladin": D4Class.PALADIN,
 }
 
 # ============== 技能栏在 Vision 索引中的 scene_id ==============
@@ -52,7 +52,7 @@ CLASS_FROM_SKILL_BAR_SCENE_ID = {
     f"{SKILL_BAR_SCENE_PREFIX}sorcerer": D4Class.SORCERER,
     f"{SKILL_BAR_SCENE_PREFIX}druid": D4Class.DRUID,
     f"{SKILL_BAR_SCENE_PREFIX}necromancer": D4Class.NECROMANCER,
-    f"{SKILL_BAR_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
+    f"{SKILL_BAR_SCENE_PREFIX}paladin": D4Class.PALADIN,
 }
 
 # ============== 技能池图标在 Vision 索引中的 scene_id ==============
@@ -65,13 +65,13 @@ CLASS_FROM_SKILL_ICON_SCENE_ID = {
     f"{SKILL_ICON_SCENE_PREFIX}sorcerer": D4Class.SORCERER,
     f"{SKILL_ICON_SCENE_PREFIX}druid": D4Class.DRUID,
     f"{SKILL_ICON_SCENE_PREFIX}necromancer": D4Class.NECROMANCER,
-    f"{SKILL_ICON_SCENE_PREFIX}spiritborn": D4Class.SPIRITBORN,
+    f"{SKILL_ICON_SCENE_PREFIX}paladin": D4Class.PALADIN,
 }
 
 
 # ============== 主属性 → 职业映射（用于 OCR 辅助识别） ==============
 # D4 只有 4 种核心属性：力量/敏捷/智力/意志。
-# 灵巫(Spiritborn)没有独占主属性，无法靠主属性反推，须依赖角色名/图标识别。
+# 圣骑士(Paladin)没有独占主属性，无法靠主属性反推，须依赖角色名/图标识别。
 PRIMARY_ATTRIBUTE_TO_CLASS = {
     '力量': D4Class.BARBARIAN,
     'strength': D4Class.BARBARIAN,
@@ -275,7 +275,7 @@ def detect_class_from_attributes(text: str) -> Optional[D4Class]:
             return top_cls
 
     # 策略2：兜底——按属性优先级（德鲁伊/野蛮人 > 死灵/游侠 > 法师靠其他线索）
-    # 优先匹配更具体的关键词。灵巫无独占主属性，不在此反推。
+    # 优先匹配更具体的关键词。圣骑士无独占主属性，不在此反推。
     priority_keywords = [
         ('willpower', D4Class.DRUID), ('意志', D4Class.DRUID),
         ('strength', D4Class.BARBARIAN), ('力量', D4Class.BARBARIAN),
@@ -377,7 +377,7 @@ class ClassIconDetector:
             ('sorcerer', D4Class.SORCERER),
             ('druid', D4Class.DRUID),
             ('necromancer', D4Class.NECROMANCER),
-            ('spiritborn', D4Class.SPIRITBORN),
+            ('paladin', D4Class.PALADIN),
         ]:
             tpl_path = os.path.join(self.templates_dir, f'{class_name}.png')
             if not os.path.exists(tpl_path):
@@ -610,15 +610,19 @@ class ClassIconDetector:
             except Exception:
                 continue
 
-            # 缩放到与数据库图标相同尺寸(100x100)
+            # 缩放到与数据库图标相同尺寸(100x100) + 转黑白预处理
+            # 黑白处理让查询图标和入库图标在同一色彩空间,消除彩色激活技能边框干扰
             try:
-                icon_resized = cv2.resize(icon, DB_ICON_SIZE, interpolation=cv2.INTER_AREA)
+                from icon_preprocess import preprocess_query_icon
+                icon_proc = preprocess_query_icon(icon, DB_ICON_SIZE)
+                if icon_proc is None:
+                    continue
             except Exception as e:
-                logger.debug(f"  图标{i} 缩放失败: {e}")
+                logger.debug(f"  图标{i} 预处理失败: {e}")
                 continue
 
             icon_path = os.path.join(tmp_dir, f'query_icon_{i}.png')
-            cv2.imwrite(icon_path, icon_resized)
+            cv2.imwrite(icon_path, icon_proc)
 
             try:
                 # 降低阈值(threshold=0, threshold_2=0)以获取候选结果
@@ -755,7 +759,7 @@ class ClassIconDetector:
             ('sorcerer', D4Class.SORCERER),
             ('druid', D4Class.DRUID),
             ('necromancer', D4Class.NECROMANCER),
-            ('spiritborn', D4Class.SPIRITBORN),
+            ('paladin', D4Class.PALADIN),
         ]:
             tpl_pool = self._load_skill_pool_template(class_name)
             if tpl_pool is None:

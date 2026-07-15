@@ -29,12 +29,10 @@ class D4Class(str, Enum):
     """D4 职业枚举"""
     BARBARIAN = "barbarian"  # 野蛮人
     ROGUE = "rogue"  # 游侠
-    SORCERER = "sorcerer"  # 巫师(游戏内中文名,Sorcerer)
+    SORCERER = "sorcerer"  # 法师
     DRUID = "druid"  # 德鲁伊
     NECROMANCER = "necromancer"  # 死灵法师
-    SPIRITBORN = "spiritborn"  # 灵巫
-    PALADIN = "paladin"  # 圣骑士(Lord of Hatred 资料片新职业)
-    WARLOCK = "warlock"  # 术师(Lord of Hatred 资料片新职业, Warlock)
+    PALADIN = "paladin"  # 圣骑士
 
 
 # 职业的中英文名称（用于OCR匹配和显示）
@@ -52,7 +50,7 @@ CLASS_NAMES: Dict[D4Class, Dict[str, str]] = {
         'color': '#e8b923',
     },
     D4Class.SORCERER: {
-        'zh': '巫师',
+        'zh': '法师',
         'en': 'Sorcerer',
         'icon': '🔮',
         'color': '#5b9bd5',
@@ -69,23 +67,11 @@ CLASS_NAMES: Dict[D4Class, Dict[str, str]] = {
         'icon': '💀',
         'color': '#7030a0',
     },
-    D4Class.SPIRITBORN: {
-        'zh': '灵巫',
-        'en': 'Spiritborn',
-        'icon': '🐉',
-        'color': '#00b050',
-    },
     D4Class.PALADIN: {
         'zh': '圣骑士',
         'en': 'Paladin',
         'icon': '🛡️',
-        'color': '#f1c40f',
-    },
-    D4Class.WARLOCK: {
-        'zh': '术师',
-        'en': 'Warlock',
-        'icon': '🔥',
-        'color': '#8e44ad',
+        'color': '#00b050',
     },
 }
 
@@ -103,33 +89,24 @@ CLASS_OCR_KEYWORDS: Dict[D4Class, List[str]] = {
         '飞刀乱舞', '飞刀', 'dance of knives', '速射', 'rapid fire',  # S13
     ],
     D4Class.SORCERER: [
-        '巫师', '法师', 'sorcerer', 'sorc', 'sor',  # 游戏内中文名"巫师"
+        '法师', '术士', 'warlock', 'sorcerer', 'sorc', 'sor',
         '冰法', '电法', '火法', '冰霜', '闪电', '燃烧', '电球',
-        '球状闪电', '球闪', 'ball lightning', '冰晶碎片', 'ice shards',
+        '球状闪电', '球闪', 'ball lightning', '冰晶碎片', 'ice shards',  # S13
     ],
     D4Class.DRUID: [
         '德鲁伊', 'druid',
         '狼人', '熊人', '风暴', '土狼', '伙伴', '大地',
-        '同伴', 'companion', '山崩', 'landslide',
+        '同伴', 'companion', '山崩', 'landslide',  # S13
     ],
     D4Class.NECROMANCER: [
         '死灵法师', '死灵', 'necromancer', 'necro', 'nec',  # 死灵法师(4字)须先于法师(2字)命中
         '骷髅', '召唤', '亡者之书', '傀儡', '骨矛', '血雾', '钢铁',
-        '血潮', '血浪', 'blood wave', '血涌', 'blood surge',
-    ],
-    D4Class.SPIRITBORN: [
-        '灵巫', 'spiritborn',
-        '虎掌', '鹰爪', '神龙', '朱鹤', '千喉',
-        '闪避', 'evade', '反击', 'counterswarm', '尖刺齐射', 'quill volley',
+        '血潮', '血浪', 'blood wave', '血涌', 'blood surge',  # S13
     ],
     D4Class.PALADIN: [
-        '圣骑士', 'paladin', 'pal',  # Lord of Hatred 资料片
-        '正义', '狂热者', '审判者', '门徒', '主宰',  # 四誓约 Juggernaut/Zealot/Judicator/Disciple
-        'juggernaut', 'zealot', 'judicator', 'disciple', '圣锤', '光环',
-    ],
-    D4Class.WARLOCK: [
-        '术师', 'warlock',  # Lord of Hatred 资料片(勿与"术士/巫师"混淆)
-        '地狱火', '恶魔', '召唤恶魔', '邪术', 'hellfire', 'eldritch',
+        '圣骑士', 'paladin', 'pal',
+        '神圣', '光环', '盾击', '祝福', '圣光', '审判',
+        '奉献', '神圣之盾', '净化', '救赎',
     ],
 }
 
@@ -142,8 +119,6 @@ CHARACTER_NAME_TO_CLASS: Dict[str, D4Class] = {
     '芝麻莱妮雅': D4Class.BARBARIAN,
     '芝麻苏玛雅': D4Class.ROGUE,
     '芝麻冬瓜': D4Class.SORCERER,
-    '芝麻赛斯美': D4Class.WARLOCK,   # 术师
-    '芝麻厚礼活': D4Class.PALADIN,   # 圣骑士
     # '芝麻老狼' 重名:既有死灵也有德鲁伊 —— 见 AMBIGUOUS_NAMES,需消歧
 }
 
@@ -280,35 +255,16 @@ DEFAULT_BUILDS: Dict[D4Class, List[ClassBuildGuide]] = {
             },
         ),
     ],
-    D4Class.SPIRITBORN: [
-        ClassBuildGuide(
-            class_type=D4Class.SPIRITBORN,
-            build_name='闪避反击灵巫',
-            season='S13',
-            source_url='https://maxroll.gg/d4/build-guides/evade-counterswarm-spiritborn-guide',
-            image_paths={
-                'skills': _img('spirit_evade_skills.png'),
-                'paragon': _img('spirit_evade_paragon.png'),
-            },
-        ),
-    ],
-    # 资料片新职业: d2core 暂无固定 bd 码,用构筑列表页(页面内按职业筛选)
     D4Class.PALADIN: [
         ClassBuildGuide(
             class_type=D4Class.PALADIN,
-            build_name='圣骑士构筑列表',
-            season='',
-            source_url='https://www.d2core.com/d4/builds',
-            image_paths={},
-        ),
-    ],
-    D4Class.WARLOCK: [
-        ClassBuildGuide(
-            class_type=D4Class.WARLOCK,
-            build_name='术师构筑列表',
-            season='',
-            source_url='https://www.d2core.com/d4/builds',
-            image_paths={},
+            build_name='圣骑士祝福光环',
+            season='S13',
+            source_url='https://maxroll.gg/d4/build-guides/paladin-guide',
+            image_paths={
+                'skills': _img('paladin_skills.png'),
+                'paragon': _img('paladin_paragon.png'),
+            },
         ),
     ],
 }
