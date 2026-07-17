@@ -109,25 +109,15 @@ def build_index(sdk):
 
 
 def crop_live_skill_bar(frame):
-    """从全屏截图裁剪技能栏(6个图标) - 使用 config.py 的坐标"""
-    h, w = frame.shape[:2]
-    x_min = int(w * 0.30)
-    x_max = int(w * 0.70)
-    y_min = int(h * 0.85)
-    y_max = int(h * 0.97)
-    return frame[y_min:y_max, x_min:x_max]
+    """使用运行时相同的共享函数裁剪技能栏。"""
+    from class_icon_detector import crop_skill_bar
+    return crop_skill_bar(frame)
 
 
 def split_skill_bar_icons(bar):
-    """分割技能栏为6个图标"""
-    h, w = bar.shape[:2]
-    slot_w = w // 6
-    icons = []
-    for i in range(6):
-        x1 = i * slot_w
-        x2 = (i + 1) * slot_w if i < 5 else w
-        icons.append(bar[:, x1:x2])
-    return icons
+    """使用运行时相同的方形槽位检测分割技能图标。"""
+    from class_icon_detector import split_skill_bar_icons as split_runtime_skill_bar_icons
+    return split_runtime_skill_bar_icons(bar)
 
 
 def test_match(sdk):

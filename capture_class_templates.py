@@ -89,27 +89,9 @@ def capture_from_clipboard():
 
 
 def crop_skill_bar(frame):
-    """裁剪技能池+技能栏合并区域(与 class_icon_detector.crop_skill_bar 一致)
-
-    模板布局(752x768):
-    - 上方 75% = 技能池(5行技能图标,该职业所有可用技能)
-    - 下方 25% = 技能栏(6个当前装备的技能图标)
-
-    相对坐标(2560x1600 实测校准):
-    - 横向: 13% ~ 43%
-    - 纵向: 50% ~ 97%
-    """
-    if frame is None or frame.size == 0:
-        return None
-    h, w = frame.shape[:2]
-    x_min = int(w * 0.13)
-    x_max = int(w * 0.43)
-    y_min = int(h * 0.50)
-    y_max = int(h * 0.97)
-    if x_max <= x_min or y_max <= y_min:
-        return None
-    bar = frame[y_min:y_max, x_min:x_max]
-    return bar if bar.size > 0 else None
+    """使用运行时相同的共享函数裁剪底部 HUD 技能栏。"""
+    from class_icon_detector import crop_skill_bar as crop_runtime_skill_bar
+    return crop_runtime_skill_bar(frame)
 
 
 def main():

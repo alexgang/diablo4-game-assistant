@@ -181,14 +181,93 @@ def crop_skill_bar(frame: np.ndarray) -> Optional[np.ndarray]:
     if frame is None or frame.size == 0:
         return None
     h, w = frame.shape[:2]
-    x_min = int(w * 0.30)
-    x_max = int(w * 0.70)
-    y_min = int(h * 0.85)
-    y_max = int(h * 0.97)
+    x_min = int(w * 0.25)
+    x_max = int(w * 0.75)
+    y_min = int(h * 0.78)
+    y_max = h
     if x_max <= x_min or y_max <= y_min:
         return None
     bar = frame[y_min:y_max, x_min:x_max]
     return bar if bar.size > 0 else None
+
+
+def _rect_overlap(left: tuple, right: tuple) -> float:
+    x1 = max(left[0], right[0])
+    y1 = max(left[1], right[1])
+    x2 = min(left[0] + left[2], right[0] + right[2])
+    y2 = min(left[1] + left[3], right[1] + right[3])
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    intersection = (x2 - x1) * (y2 - y1)
+    return intersection / float(min(left[2] * left[3], right[2] * right[3]))
+
+
+def detect_skill_bar_slots(skill_bar: np.ndarray) -> list:
+    """检测技能栏中真实的方形技能槽，返回按横坐标排序的矩形。"""
+    if skill_bar is None or skill_bar.size == 0:
+        return []
+
+    gray = cv2.cvtColor(skill_bar, cv2.COLOR_BGR2GRAY)
+    enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+    edges = cv2.Canny(blurred, 40, 120)
+    edges = cv2.morphologyEx(
+        edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    )
+    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    region_h, region_w = skill_bar.shape[:2]
+    min_side = max(18, int(region_h * 0.12))
+    max_side = min(int(region_h * 0.55), int(region_w * 0.12))
+    candidates = []
+    for contour in contours:
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            continue
+        polygon = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
+        x, y, width, height = cv2.boundingRect(polygon)
+        aspect = width / float(height) if height else 0.0
+        if not (min_side <= width <= max_side and min_side <= height <= max_side):
+            continue
+        if not 0.78 <= aspect <= 1.28:
+            continue
+        candidates.append((x, y, width, height))
+
+    candidates.sort(key=lambda rect: rect[2] * rect[3], reverse=True)
+    deduped = []
+    for candidate in candidates:
+        if all(_rect_overlap(candidate, existing) < 0.55 for existing in deduped):
+            deduped.append(candidate)
+
+    rows = []
+    for rect in sorted(deduped, key=lambda item: item[1] + item[3] / 2):
+        center_y = rect[1] + rect[3] / 2
+        for row in rows:
+            median_height = float(np.median([item[3] for item in row]))
+            row_center = float(np.median([item[1] + item[3] / 2 for item in row]))
+            if abs(center_y - row_center) <= max(10.0, median_height * 0.45):
+                row.append(rect)
+                break
+        else:
+            rows.append([rect])
+
+    valid_rows = []
+    for row in rows:
+        row.sort(key=lambda item: item[0])
+        if not 4 <= len(row) <= 8:
+            continue
+        sizes = [min(item[2], item[3]) for item in row]
+        if np.std(sizes) > max(4.0, np.mean(sizes) * 0.18):
+            continue
+        centers = [item[0] + item[2] / 2 for item in row]
+        gaps = np.diff(centers)
+        if len(gaps) and (np.min(gaps) < np.mean(sizes) * 0.65 or np.max(gaps) > np.mean(sizes) * 2.2):
+            continue
+        valid_rows.append(row)
+
+    if not valid_rows:
+        return []
+    return max(valid_rows, key=lambda row: (len(row), np.mean([item[1] for item in row])))
 
 
 def split_skill_bar_icons(skill_bar: np.ndarray, num_icons: int = 6) -> list:
@@ -204,13 +283,13 @@ def split_skill_bar_icons(skill_bar: np.ndarray, num_icons: int = 6) -> list:
     """
     if skill_bar is None or skill_bar.size == 0:
         return []
-    h, w = skill_bar.shape[:2]
-    slot_w = w // num_icons
+    slots = detect_skill_bar_slots(skill_bar)
+    if not slots:
+        logger.info("技能栏未检测到可靠的方形技能槽")
+        return []
     icons = []
-    for i in range(num_icons):
-        x1 = i * slot_w
-        x2 = (i + 1) * slot_w if i < num_icons - 1 else w
-        icon = skill_bar[:, x1:x2]
+    for x, y, width, height in slots:
+        icon = skill_bar[y:y + height, x:x + width]
         if icon.size > 0:
             icons.append(icon)
     return icons
